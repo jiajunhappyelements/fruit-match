@@ -39,6 +39,7 @@ import {
   SWAY_SPEED,
   swayForLevel,
 } from "../config";
+import { sfx, unlockAudio } from "../audio";
 import {
   SKY_TEXTURE,
   TERRAIN_TEXTURE,
@@ -63,6 +64,7 @@ type Fruit = Phaser.GameObjects.Image;
 export class GameScene extends Phaser.Scene {
   private fruits: Fruit[] = [];
   private pending: string[] = []; // fruit types queued to feed in from above
+  private pinnedScratch: Fruit[] = []; // reused per-frame buffer (no GC churn)
   private dying = new Set<MatterJS.BodyType>();
   private remaining = 0;
   private gameOver = false;
@@ -121,6 +123,9 @@ export class GameScene extends Phaser.Scene {
     this.buildSparks();
     this.buildBoard();
     this.buildHud();
+    // Browsers only allow audio to start from a user gesture.
+    this.input.once("pointerdown", unlockAudio);
+
     if ((import.meta as any).env?.DEV) (window as any).__scene = this;
 
     // NOTE: elimination is NOT event-driven. Matching is a continuous
@@ -292,6 +297,7 @@ export class GameScene extends Phaser.Scene {
     const brick = this.bricks.pop();
     if (!brick) return;
     this.unlocks++;
+    sfx.unlock();
 
     const { x, y } = brick.container;
     this.matter.world.remove(brick.body);
@@ -400,7 +406,11 @@ export class GameScene extends Phaser.Scene {
   // fruits in from above. (The original game's signature "整体下移" behaviour.)
   // ---------------------------------------------------------------------------
   private updateConveyor(delta: number): void {
-    const pinned = this.fruits.filter((f) => !f.getData("released"));
+    // Reused scratch array — updateConveyor runs every frame, so allocating a
+    // fresh one here was pure GC churn on low-end phones.
+    const pinned = this.pinnedScratch;
+    pinned.length = 0;
+    for (const f of this.fruits) if (!f.getData("released")) pinned.push(f);
 
     if (pinned.length === 0) {
       // Board emptied while stock remains (player cleared everything visible):
@@ -542,6 +552,7 @@ export class GameScene extends Phaser.Scene {
     (fruit as any).setVelocity(0, 0);
     (fruit as any).setAngularVelocity(Phaser.Math.FloatBetween(-0.05, 0.05));
 
+    sfx.release();
     this.nudgeSway();
   }
 
@@ -583,6 +594,7 @@ export class GameScene extends Phaser.Scene {
       ease: "Back.easeIn",
       onComplete: () => {
         Phaser.Utils.Array.Remove(this.fruits, fruit);
+        this.dying.delete(body); // don't retain destroyed bodies for the level
         fruit.destroy(); // also removes the Matter body
       },
     });
@@ -648,6 +660,7 @@ export class GameScene extends Phaser.Scene {
     // landing a match ON TOP (or using 打乱 to reorder).
     const contactDist = FRUIT_RADIUS * 2 + CONTACT_EPS;
     const used = new Set<Fruit>();
+    let combo = 0;
     for (let i = 0; i < inZone.length; i++) {
       const a = inZone[i];
       if (used.has(a)) continue;
@@ -662,6 +675,7 @@ export class GameScene extends Phaser.Scene {
         used.add(b);
         this.eliminate(a);
         this.eliminate(b);
+        sfx.match(combo++);
         break;
       }
     }
@@ -755,6 +769,7 @@ export class GameScene extends Phaser.Scene {
 
   private shuffle(): void {
     if (this.gameOver) return;
+    sfx.shuffle();
     for (const fruit of this.fruits) {
       if (!fruit.getData("released")) continue;
       if (this.dying.has(fruit.body as MatterJS.BodyType)) continue;
@@ -766,6 +781,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private win(): void {
+    sfx.win();
     // Save progress FIRST so the next level survives a page close/reload.
     localStorage.setItem(LEVEL_STORAGE_KEY, String(this.level + 1));
     this.endGame("恭喜过关！", 0x3aa655, "下一关", () =>
@@ -774,6 +790,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private lose(): void {
+    sfx.lose();
     this.endGame("装不下啦", 0xd9534f, "再玩一次", () =>
       this.scene.restart({ level: this.level }),
     );
