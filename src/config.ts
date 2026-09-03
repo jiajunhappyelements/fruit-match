@@ -84,6 +84,11 @@ export const LEVEL_STORAGE_KEY = "fruit-match.level";
 // the topmost fruit — kept stocked down to SPAWN_CEILING (just off-screen) so
 // there is always a buffer row about to slide into view.
 export const INITIAL_VISIBLE = 26;
+// 应急补货阈值：只有棋盘**真的稀了**才允许把水果补进可见区域的空位。
+// 曾经拿 INITIAL_VISIBLE 当这个阈值，但开局摆的正好就是 INITIAL_VISIBLE 个，
+// 点掉一个就算「缺货」——于是每点一下都有水果凭空出现在棋盘中间的洞里，
+// 而刚空出来的那个洞恰恰是最容易被选中的空位。应急分支变成了常态路径。
+export const RESTOCK_EMERGENCY = 12;
 export const SINK_SPEED = 90; // px per second
 export const SPAWN_CEILING = -60; // stop stocking once topmost fruit is above this
 

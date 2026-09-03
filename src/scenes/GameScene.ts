@@ -10,6 +10,7 @@ import {
   levelConfig,
   LEVEL_STORAGE_KEY,
   INITIAL_VISIBLE,
+  RESTOCK_EMERGENCY,
   SINK_SPEED,
   SPAWN_CEILING,
   SCATTER_TOP,
@@ -521,7 +522,14 @@ export class GameScene extends Phaser.Scene {
     // while the queue still holds the fruit the player needs, and if the
     // lowest fruit already sits at boardBottom nothing sinks to break the
     // deadlock either — the level becomes unwinnable.
-    const understocked = pinnedCount < INITIAL_VISIBLE;
+    //
+    // This is an EMERGENCY hatch, so the bar has to be genuinely low. It used
+    // to read `< INITIAL_VISIBLE`, which the board fails the instant one fruit
+    // is released (a level starts with exactly INITIAL_VISIBLE pinned) — so
+    // every single click popped a fruit into a hole in the middle of the
+    // board, usually the hole just vacated. Restock is supposed to come from
+    // ABOVE and slide in as the cloud sinks.
+    const understocked = pinnedCount < RESTOCK_EMERGENCY;
 
     // Stocked board: keep a small buffer just above the topmost fruit, capped
     // by SPAWN_CEILING so it cannot climb forever.
@@ -530,11 +538,11 @@ export class GameScene extends Phaser.Scene {
     // New fruit joins the drifting cloud, so bias its column by the sway offset.
     const centre = WIDTH / 2 + this.swayX;
     for (let i = 0; i < 28; i++) {
-      // Thin board: refill anywhere free in the VISIBLE band — never above the
-      // topmost fruit. Stacking upward walks the whole cloud off the top of the
-      // screen, where it can neither be clicked nor sink back down (the sink
-      // only runs while the lowest fruit is above boardBottom), which strands
-      // most of the level out of reach.
+      // Emergency only (board nearly empty): refill anywhere free in the
+      // VISIBLE band — never above the topmost fruit. Stacking upward walks the
+      // whole cloud off the top of the screen, where it can neither be clicked
+      // nor sink back down (the sink only runs while the lowest fruit is above
+      // boardBottom), which strands most of the level out of reach.
       const y = understocked
         ? Phaser.Math.FloatBetween(SCATTER_TOP, this.boardBottom())
         : Phaser.Math.FloatBetween(topmost - 150, topmost - 60);
