@@ -15,9 +15,9 @@ export const CAT_PINNED = 0x0002; // fruits still stuck in the sky
 export const CAT_ACTIVE = 0x0004; // fruits that have been released
 
 // The playable produce set. Each key maps to public/assets/<pack>/<key>.png.
-// ORDER IS THE DIFFICULTY CURVE: levelConfig unlocks one more type per level
-// from the front of this list — fruits carry levels 1–10, vegetables start
-// appearing from level 11 as fresh "new content" surprises.
+// ORDER IS THE DIFFICULTY CURVE: levelConfig unlocks one more type every two
+// levels from the front of this list — the 12 fruits carry the early journey,
+// vegetables start appearing around level 21 as fresh "new content" surprises.
 export interface FruitType {
   key: string;
   pack: "fruits" | "produce";
@@ -56,16 +56,21 @@ export const FRUIT_TYPES: FruitType[] = [
 
 // --- Level progression -------------------------------------------------------
 // Difficulty climbs by adding fruit VARIETY (more types = harder to pair) and
-// volume. Level 1: 3 types / 40 fruits — gentle for a kid. Types cap at the
-// full set, count caps so the scatter band never over-packs.
+// volume. Level 1: 3 types / 34 fruits — gentle for a kid. Both cap out around
+// level 40-53, well inside the ~141-level journey (see levels.ts).
 export function levelConfig(level: number): {
   typeCount: number;
   fruitCount: number;
 } {
-  const typeCount = Math.min(2 + level, FRUIT_TYPES.length);
+  // Variety ramps over the first ~60 levels (roughly the first two thirds of
+  // the journey) rather than 26, so the long trip keeps introducing something.
+  // +1 type every 2 levels after a gentle 3-type start.
+  const typeCount = Math.min(3 + Math.floor((level - 1) / 2), FRUIT_TYPES.length);
   // Big pools like the original game ("剩余 172"): only ~INITIAL_VISIBLE are on
   // screen at once, the rest queue up and feed in from above as the board sinks.
-  const fruitCount = Math.min(30 + level * 10, 160); // always even
+  // +6 per level caps at 160 around level 40.
+  const raw = Math.min(28 + level * 6, 160);
+  const fruitCount = raw % 2 === 0 ? raw : raw + 1; // keep it even so pairs work
   return { typeCount, fruitCount };
 }
 
@@ -94,9 +99,9 @@ export const SWAY_TRIGGER = 3; // nudge once per this many fruit releases
 export const SWAY_MAX = 70; // max |offset| from centre before reversing
 export const SWAY_SPEED = 140; // px/sec easing toward the pending nudge target
 
-// Lateral drift starts at level 8, like stumps/unlocks are gated by level.
+// Lateral drift joins the mix at level 19, once unlocks and stumps have landed.
 export function swayForLevel(level: number): boolean {
-  return level >= 8;
+  return level >= 19;
 }
 
 // Board layout: an ORGANIC scatter (like the original game), not a rigid grid.
@@ -136,14 +141,14 @@ export const OVERFLOW_HOLD_MS = 350; // must stay overfull this long to fail (de
 // strictly serial, like the original. Raising the well also compresses the
 // pinned board above (smaller scatter band) = extra difficulty. Locks reset
 // every level.
-export const UNLOCK_SLOTS = 2; // maximum reserve slots (level 10+)
+export const UNLOCK_SLOTS = 2; // maximum reserve slots (level 24+)
 export const SLOT_HEIGHT = 70; // one fruit of channel depth per slot
 
-// How many reserve slots a level exposes: none early, one from level 5,
-// both from level 10.
+// How many reserve slots a level exposes: none early, one from level 9,
+// both from level 24.
 export function unlockSlotsForLevel(level: number): number {
-  if (level >= 10) return 2;
-  if (level >= 5) return 1;
+  if (level >= 24) return 2;
+  if (level >= 9) return 1;
   return 0;
 }
 
@@ -156,10 +161,10 @@ export function unlockSlotsForLevel(level: number): number {
 export const STUMP_RADIUS = 36; // physics circle
 export const STUMP_INSET = 30; // stump centre distance from the screen edge
 
-// Count per level: none early, then 2 / 4 / 6 in steps, alternating sides.
+// Count per level: none before 14, then 2 / 4 / 6 every 12 levels, alternating sides.
 export function stumpsForLevel(level: number): number {
-  if (level < 7) return 0;
-  return Math.min(2 + Math.floor((level - 7) / 3) * 2, 6);
+  if (level < 14) return 0;
+  return Math.min(2 + Math.floor((level - 14) / 12) * 2, 6);
 }
 
 // Elimination requires two same-type fruits to be ACTUALLY TOUCHING inside the

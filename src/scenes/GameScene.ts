@@ -40,6 +40,7 @@ import {
   swayForLevel,
 } from "../config";
 import { sfx, unlockAudio } from "../audio";
+import { placeOf, isJourneyComplete, TOTAL_LEVELS, REGIONS, type Place } from "../levels";
 import {
   SKY_TEXTURE,
   TERRAIN_TEXTURE,
@@ -72,6 +73,7 @@ export class GameScene extends Phaser.Scene {
   private level = 1;
   private unlocks = 0; // reserve slots opened this level
   private raise = 0; // how far the whole well is shifted up this level (px)
+  private place!: Place; // where this level sits on the China journey
   private sway = false; // does the pinned cloud drift sideways this level?
   private swayX = 0; // current lateral offset of the pinned cloud (px)
   private swayTarget = 0; // offset the cloud is easing toward
@@ -100,6 +102,7 @@ export class GameScene extends Phaser.Scene {
     // Higher levels raise the whole well, deepening the channel to expose
     // locked reserve slots AND squeezing the board space above.
     this.raise = unlockSlotsForLevel(this.level) * SLOT_HEIGHT;
+    this.place = placeOf(this.level);
     this.sway = swayForLevel(this.level);
     this.swayX = 0;
     this.swayTarget = 0;
@@ -703,13 +706,25 @@ export class GameScene extends Phaser.Scene {
   // ---------------------------------------------------------------------------
   private buildHud(): void {
     this.add
-      .text(WIDTH / 2, 44, `第 ${this.level} 关`, {
+      .text(WIDTH / 2, 38, `第 ${this.level} 关`, {
         fontSize: "46px",
         fontStyle: "bold",
         color: "#ffffff",
         stroke: "#2a6f9f",
         strokeThickness: 10,
         shadow: { offsetX: 0, offsetY: 4, color: "#25587b", blur: 0, fill: true },
+      })
+      .setOrigin(0.5)
+      .setDepth(25);
+
+    // Journey label under the level number: 广东-广州
+    this.add
+      .text(WIDTH / 2, 78, `${this.place.region}-${this.place.city}`, {
+        fontSize: "26px",
+        fontStyle: "bold",
+        color: "#eaf7ff",
+        stroke: "#2a6f9f",
+        strokeThickness: 6,
       })
       .setOrigin(0.5)
       .setDepth(25);
@@ -727,8 +742,8 @@ export class GameScene extends Phaser.Scene {
     this.updateRemaining();
 
     this.add
-      .text(WIDTH / 2, 96, "点一下水果让它掉下去，凑成一对就消除！", {
-        fontSize: "24px",
+      .text(WIDTH / 2, 112, "点一下水果让它掉下去，凑成一对就消除！", {
+        fontSize: "22px",
         color: "#ffffff",
         stroke: "#2d74a8",
         strokeThickness: 5,
@@ -783,16 +798,49 @@ export class GameScene extends Phaser.Scene {
   private win(): void {
     sfx.win();
     // Save progress FIRST so the next level survives a page close/reload.
-    localStorage.setItem(LEVEL_STORAGE_KEY, String(this.level + 1));
-    this.endGame("恭喜过关！", 0x3aa655, "下一关", () =>
-      this.scene.restart({ level: this.level + 1 }),
+    const next = this.level + 1;
+    localStorage.setItem(LEVEL_STORAGE_KEY, String(next));
+
+    // Finished the whole country?
+    if (isJourneyComplete(next)) {
+      this.endGame(
+        "跑完全国啦！",
+        0xe8a33d,
+        "再玩一遍",
+        () => {
+          localStorage.setItem(LEVEL_STORAGE_KEY, "1");
+          this.scene.restart({ level: 1 });
+        },
+        `你走遍了 ${REGIONS.length} 个省市自治区，共 ${TOTAL_LEVELS} 关`,
+      );
+      return;
+    }
+
+    // Crossing into a new region is the journey's milestone moment.
+    const here = this.place;
+    const there = placeOf(next);
+    const subtitle =
+      there.region === here.region
+        ? `下一站 ${there.region}-${there.city}`
+        : `即将到达 ${there.region}！（第 ${there.regionIndex}/${REGIONS.length} 省）`;
+
+    this.endGame(
+      "恭喜过关！",
+      0x3aa655,
+      "下一关",
+      () => this.scene.restart({ level: next }),
+      subtitle,
     );
   }
 
   private lose(): void {
     sfx.lose();
-    this.endGame("装不下啦", 0xd9534f, "再玩一次", () =>
-      this.scene.restart({ level: this.level }),
+    this.endGame(
+      "装不下啦",
+      0xd9534f,
+      "再玩一次",
+      () => this.scene.restart({ level: this.level }),
+      `${this.place.region}-${this.place.city}`,
     );
   }
 
@@ -801,6 +849,7 @@ export class GameScene extends Phaser.Scene {
     color: number,
     btnLabel: string,
     onClick: () => void,
+    subtitle?: string,
   ): void {
     if (this.gameOver) return;
     this.gameOver = true;
@@ -816,6 +865,18 @@ export class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setDepth(31);
+
+    if (subtitle) {
+      this.add
+        .text(WIDTH / 2, HEIGHT / 2 - 10, subtitle, {
+          fontSize: "30px",
+          color: "#ffe9a8",
+          align: "center",
+          wordWrap: { width: WIDTH - 120 },
+        })
+        .setOrigin(0.5)
+        .setDepth(31);
+    }
 
     const btn = this.makeButton(WIDTH / 2, HEIGHT / 2 + 60, btnLabel, color, onClick);
     btn.setDepth(31);
