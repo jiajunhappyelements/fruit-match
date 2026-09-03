@@ -8,7 +8,7 @@
 //    display:fullscreen 说的那种全屏启动。
 // 2. 顺带离线可玩 —— 孩子在电梯里、地铁上也能打开。
 // ---------------------------------------------------------------------------
-const CACHE = "fruit-match-v1";
+const CACHE = "fruit-match-v2";
 
 self.addEventListener("install", () => {
   // 不等旧版本的页面关掉，新版本立刻接管
@@ -33,11 +33,16 @@ self.addEventListener("fetch", (event) => {
 
   // 打开页面：网络优先。这样每次发布的新版本都能拿到，
   // 断网时才退回缓存里的上一份。
+  //
+  // 关键：必须用 cache:"no-store" 绕开浏览器自己的 HTTP 缓存。直接 fetch(req)
+  // 是允许命中 HTTP 缓存的，而 GitHub Pages 给 index.html 的 max-age 是 10 分钟，
+  // 于是「网络优先」实际变成「HTTP 缓存优先」——发了新版本，页面却还引用着旧的
+  // 打包产物（产物名带哈希，旧 HTML 就一直指向旧 JS）。实测踩到过。
   if (req.mode === "navigate") {
     event.respondWith(
       (async () => {
         try {
-          const fresh = await fetch(req);
+          const fresh = await fetch(req.url, { cache: "no-store" });
           const cache = await caches.open(CACHE);
           cache.put(req, fresh.clone());
           return fresh;
