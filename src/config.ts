@@ -66,8 +66,8 @@ export function levelConfig(level: number): {
   // the journey) rather than 26, so the long trip keeps introducing something.
   // +1 type every 2 levels after a gentle 3-type start.
   const typeCount = Math.min(3 + Math.floor((level - 1) / 2), FRUIT_TYPES.length);
-  // Big pools like the original game ("剩余 172"): only ~INITIAL_VISIBLE are on
-  // screen at once, the rest queue up and feed in from above as the board sinks.
+  // Big pools like the original game ("剩余 172"): 整堆开局就全部摆好，只有一屏
+  // 在可见区域内，其余堆在屏幕上方，随着整体下移滑进画面。
   // +6 per level, reaching the 160 cap at level 22.
   const raw = Math.min(28 + level * 6, 160);
   const fruitCount = raw % 2 === 0 ? raw : raw + 1; // keep it even so pairs work
@@ -76,21 +76,23 @@ export function levelConfig(level: number): {
 
 export const LEVEL_STORAGE_KEY = "fruit-match.level";
 
-// --- Conveyor (the sinking board) --------------------------------------------
-// Only ~INITIAL_VISIBLE fruits are spawned into the band at level start; the
-// rest wait in a queue. When the LOWEST pinned fruit is consumed the whole
-// pinned cloud sinks (at SINK_SPEED) until a fruit touches the band bottom
-// again, and new fruits from the queue are dart-thrown into the strip above
-// the topmost fruit — kept stocked down to SPAWN_CEILING (just off-screen) so
-// there is always a buffer row about to slide into view.
-export const INITIAL_VISIBLE = 26;
-// 应急补货阈值：只有棋盘**真的稀了**才允许把水果补进可见区域的空位。
-// 曾经拿 INITIAL_VISIBLE 当这个阈值，但开局摆的正好就是 INITIAL_VISIBLE 个，
-// 点掉一个就算「缺货」——于是每点一下都有水果凭空出现在棋盘中间的洞里，
-// 而刚空出来的那个洞恰恰是最容易被选中的空位。应急分支变成了常态路径。
-export const RESTOCK_EMERGENCY = 12;
+// --- Conveyor (the sinking pile) ---------------------------------------------
+// 这一关的水果**在开局时就全部生成好了**：一屏在可见区域内，其余全部堆在屏幕
+// 上方。之后游戏只做一件事——**整体下移**，让最下面那颗水果始终停在
+// SCATTER_BOTTOM 那条线上（也就是离漏斗口保持固定距离 H）。最下面的被点掉了，
+// 整堆就下沉到下一颗顶上那条线为止，上方原本在屏幕外的水果跟着滑进画面。
+//
+// 这里**没有任何「生成/补货」逻辑**，这是刻意的。早先的实现是「只生成一屏 +
+// 其余排队 + 从上方补入」，那套东西前后制造了三次补货死锁、一次「水果凭空出现
+// 在刚空出来的位置上」——补货位置算错的 bug，只有在“存在补货”时才可能出现。
+// 整堆预生成之后，这一类 bug 在结构上不存在。
 export const SINK_SPEED = 90; // px per second
-export const SPAWN_CEILING = -60; // stop stocking once topmost fruit is above this
+
+// 撒点时向上扩展的步长：当前这一层塞不下了（连续 PILE_MISS_LIMIT 次被最小
+// 间距挡回），就往上再开一层 PILE_SLAB 高的空间继续撒，直到整堆摆完。
+// 水果堆的高度因此是按数量自然长出来的，不用预先算，也不会撒不下。
+export const PILE_SLAB = 240;
+export const PILE_MISS_LIMIT = 200;
 
 // --- Lateral drift (the "隔几步向右移" board) ---------------------------------
 // On higher levels the whole pinned cloud also slides sideways, bouncing

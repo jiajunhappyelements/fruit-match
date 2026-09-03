@@ -9,10 +9,9 @@ import {
   CAT_ACTIVE,
   levelConfig,
   LEVEL_STORAGE_KEY,
-  INITIAL_VISIBLE,
-  RESTOCK_EMERGENCY,
+  PILE_SLAB,
+  PILE_MISS_LIMIT,
   SINK_SPEED,
-  SPAWN_CEILING,
   SCATTER_TOP,
   SCATTER_BOTTOM,
   SCATTER_HALF_TOP,
@@ -71,7 +70,6 @@ type Fruit = Phaser.GameObjects.Image;
 
 export class GameScene extends Phaser.Scene {
   private fruits: Fruit[] = [];
-  private pending: string[] = []; // fruit types queued to feed in from above
   private pinnedScratch: Fruit[] = []; // reused per-frame buffer (no GC churn)
   private dying = new Set<MatterJS.BodyType>();
   private remaining = 0;
@@ -409,42 +407,46 @@ export class GameScene extends Phaser.Scene {
   private buildBoard(): void {
     const { typeCount, fruitCount } = levelConfig(this.level);
     const pool = this.buildTypePool(fruitCount, typeCount);
-    const visible = Math.min(INITIAL_VISIBLE, pool.length);
-    const points = this.scatterPoints(visible);
+    // 整堆一次摆完：一屏在可见区域内，其余全部堆在屏幕上方等着被下移带进来。
+    // 摆完之后这一关就再也不会生成任何水果了。
+    const points = this.scatterPile(pool.length);
     points.forEach((p, i) => this.spawnFruit(p.x, p.y, pool[i]));
-    this.pending = pool.slice(visible);
     this.remaining = fruitCount;
   }
 
-  // Organic scatter (like the original game): dart-throw points uniformly by
-  // AREA into an inverted-triangle band that narrows toward the funnel mouth,
-  // rejecting any point closer than SCATTER_MIN_DIST to an accepted one. If
-  // the dart throwing gets unlucky, the spacing relaxes slightly so board
-  // generation can never hang.
-  private scatterPoints(count: number): { x: number; y: number }[] {
+  // 整堆水果的撒点（原版那种不规则堆，不是网格）。按**面积**均匀 dart-throw，
+  // 任何离已放点小于 SCATTER_MIN_DIST 的候选点都被拒掉，所以水果之间不会叠。
+  //
+  // 高度不预先算：先在可见区域内撒，撒不下了（连续 PILE_MISS_LIMIT 次被挡回）
+  // 就往上再开一层 PILE_SLAB 高的空间接着撒。新开的一层永远是空的，所以循环
+  // 必然推进、不会卡死，水果堆的高度就按这一关的数量自然长出来。
+  private scatterPile(count: number): { x: number; y: number }[] {
     const pts: { x: number; y: number }[] = [];
-    let minDist = SCATTER_MIN_DIST;
-    let attempts = 0;
+    let slabBottom = this.boardBottom();
+    let slabTop = SCATTER_TOP; // 第一层就是可见区域
+    let misses = 0;
+
     while (pts.length < count) {
-      if (++attempts > 3000) {
-        minDist *= 0.95;
-        attempts = 0;
-      }
-      // Uniform in the bounding box, then keep only points inside the band —
-      // this yields uniform density per unit area (no crowding at the narrow
-      // bottom, which uniform-per-row sampling would cause).
-      const y = Phaser.Math.FloatBetween(SCATTER_TOP, this.boardBottom());
+      const y = Phaser.Math.FloatBetween(slabTop, slabBottom);
+      // x 先在整个外接矩形里取，再把落到梯形外面的丢掉 —— 这样得到的是
+      // 按面积均匀的密度；直接在带宽内取会让窄的底部挤成一团。
       const x = Phaser.Math.FloatBetween(
         WIDTH / 2 - SCATTER_HALF_TOP,
         WIDTH / 2 + SCATTER_HALF_TOP,
       );
+      // 落在梯形外属于几何问题，不算「这一层满了」，所以不计入 misses。
       if (Math.abs(x - WIDTH / 2) > this.bandHalfWidth(y)) continue;
-      if (
-        pts.some((p) => Phaser.Math.Distance.Between(p.x, p.y, x, y) < minDist)
-      ) {
+
+      if (pts.some((q) => Phaser.Math.Distance.Between(q.x, q.y, x, y) < SCATTER_MIN_DIST)) {
+        if (++misses >= PILE_MISS_LIMIT) {
+          slabBottom = slabTop; // 这一层塞满了，往上再开一层
+          slabTop -= PILE_SLAB;
+          misses = 0;
+        }
         continue;
       }
       pts.push({ x, y });
+      misses = 0;
     }
     return pts;
   }
@@ -467,28 +469,13 @@ export class GameScene extends Phaser.Scene {
     const pinned = this.pinnedScratch;
     pinned.length = 0;
     for (const f of this.fruits) if (!f.getData("released")) pinned.push(f);
-
-    if (pinned.length === 0) {
-      // Board emptied while stock remains (player cleared everything visible):
-      // restock a fresh batch straight into the band.
-      if (this.pending.length > 0) {
-        const batch = Math.min(INITIAL_VISIBLE, this.pending.length);
-        const points = this.scatterPoints(batch);
-        const types = this.pending.splice(0, batch);
-        points.forEach((p, i) => this.spawnFruit(p.x, p.y, types[i]));
-      }
-      return;
-    }
+    if (pinned.length === 0) return; // 整堆都点完了，等消除判定收尾
 
     let lowest = -Infinity;
-    let topmost = Infinity;
-    for (const f of pinned) {
-      if (f.y > lowest) lowest = f.y;
-      if (f.y < topmost) topmost = f.y;
-    }
+    for (const f of pinned) if (f.y > lowest) lowest = f.y;
 
-    // Sink: only when the bottom of the cloud has been consumed (matches the
-    // original: clearing the lowest fruits makes the whole wall advance).
+    // 下移：让最下面那颗水果始终停在 boardBottom 那条线上。它被点掉之后，
+    // 整堆下沉到「下一颗最低的」顶上那条线为止。只会往下，不会回弹。
     const deficit = this.boardBottom() - lowest;
     const dy = deficit > 0.5 ? Math.min(deficit, (SINK_SPEED * delta) / 1000) : 0;
 
@@ -505,60 +492,9 @@ export class GameScene extends Phaser.Scene {
       for (const f of pinned) {
         (f as any).setPosition(f.x + dx, f.y + dy);
       }
-      topmost += dy;
-    }
-
-    this.trySpawnAbove(topmost, pinned.length);
-  }
-
-  // Dart-throw ONE queued fruit into the strip above the topmost pinned fruit,
-  // keeping the off-screen buffer stocked. One per frame keeps pop-in gradual.
-  private trySpawnAbove(topmost: number, pinnedCount: number): void {
-    if (this.pending.length === 0) return;
-
-    // Keeping stock is gated on TWO things, not just the topmost fruit's
-    // height. Height alone softlocks a level once the board thins out: a
-    // single stray fruit drifting above SPAWN_CEILING blocks every restock
-    // while the queue still holds the fruit the player needs, and if the
-    // lowest fruit already sits at boardBottom nothing sinks to break the
-    // deadlock either — the level becomes unwinnable.
-    //
-    // This is an EMERGENCY hatch, so the bar has to be genuinely low. It used
-    // to read `< INITIAL_VISIBLE`, which the board fails the instant one fruit
-    // is released (a level starts with exactly INITIAL_VISIBLE pinned) — so
-    // every single click popped a fruit into a hole in the middle of the
-    // board, usually the hole just vacated. Restock is supposed to come from
-    // ABOVE and slide in as the cloud sinks.
-    const understocked = pinnedCount < RESTOCK_EMERGENCY;
-
-    // Stocked board: keep a small buffer just above the topmost fruit, capped
-    // by SPAWN_CEILING so it cannot climb forever.
-    if (!understocked && topmost <= SPAWN_CEILING) return;
-
-    // New fruit joins the drifting cloud, so bias its column by the sway offset.
-    const centre = WIDTH / 2 + this.swayX;
-    for (let i = 0; i < 28; i++) {
-      // Emergency only (board nearly empty): refill anywhere free in the
-      // VISIBLE band — never above the topmost fruit. Stacking upward walks the
-      // whole cloud off the top of the screen, where it can neither be clicked
-      // nor sink back down (the sink only runs while the lowest fruit is above
-      // boardBottom), which strands most of the level out of reach.
-      const y = understocked
-        ? Phaser.Math.FloatBetween(SCATTER_TOP, this.boardBottom())
-        : Phaser.Math.FloatBetween(topmost - 150, topmost - 60);
-      const half = this.bandHalfWidth(y);
-      const x = Phaser.Math.FloatBetween(centre - half, centre + half);
-      const clear = !this.fruits.some(
-        (f) =>
-          !f.getData("released") &&
-          Phaser.Math.Distance.Between(f.x, f.y, x, y) < SCATTER_MIN_DIST,
-      );
-      if (clear) {
-        this.spawnFruit(x, y, this.pending.shift()!);
-        return;
-      }
     }
   }
+
 
   // Produce a shuffled pool where every fruit type appears an even number of
   // times, so a level is always fully clearable in principle. Only the first
@@ -785,6 +721,13 @@ export class GameScene extends Phaser.Scene {
   // HUD + end states
   // ---------------------------------------------------------------------------
   private buildHud(): void {
+    // 顶部渐变遮罩：水果堆现在是一整堆、会一直延伸到屏幕上方，所以 HUD 底下
+    // 不再是干净的天空。压一层上深下透的薄纱，标题和提示才读得清，同时又能
+    // 看见上面还压着水果（那正是「还有货在上面」的视觉信号）。
+    const scrim = this.add.graphics().setDepth(24);
+    scrim.fillGradientStyle(0x07314e, 0x07314e, 0x07314e, 0x07314e, 0.72, 0.72, 0, 0);
+    scrim.fillRect(0, 0, WIDTH, 185);
+
     this.add
       .text(WIDTH / 2, 38, `第 ${this.level} 关`, {
         fontSize: "46px",
