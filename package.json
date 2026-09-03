@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:quiz": "node scripts/check-quiz.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

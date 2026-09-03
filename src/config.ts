@@ -181,3 +181,13 @@ export const SETTLED_SPEED = 0.6;
 // Matter.js has no continuous collision detection, so this is what prevents
 // fast-falling fruit from passing straight through the floor/walls.
 export const MAX_FALL_SPEED = 22;
+
+// --- 答题换钥匙 (learning gate) ----------------------------------------------
+// 原版这里是「看广告解锁」。我们换成钥匙：解锁底部空位要花 1 把钥匙，钥匙靠
+// 在结算页答题挣。关键的设计约束——**题目只出现在平静时刻**（过关/失败结算页），
+// 绝不在「篮子快满了、急着解锁」的瞬间弹题，否则做题就成了路障。
+// 钥匙余额跨关保留（localStorage），调试跳关的会话用内存里的假余额，不写存档。
+export const KEY_GATE_ENABLED = true;
+export const QUIZ_ROUNDS = 3; // 一次结算页最多答几题
+export const STARTING_KEYS = 2; // 新玩家的启动资金，第一次遇到砖块不至于干瞪眼
+export const DEBUG_KEYS = 99; // ?level=N 调试会话的余额

@@ -38,8 +38,14 @@ import {
   SWAY_MAX,
   SWAY_SPEED,
   swayForLevel,
+  KEY_GATE_ENABLED,
+  QUIZ_ROUNDS,
+  STARTING_KEYS,
+  DEBUG_KEYS,
 } from "../config";
 import { sfx, unlockAudio } from "../audio";
+import { loadKeys, saveKeys, availableSubjects, KEY_STORAGE_KEY } from "../quiz";
+import { showQuizPanel } from "../quiz/panel";
 import { placeOf, isJourneyComplete, TOTAL_LEVELS, REGIONS, type Place } from "../levels";
 import {
   SKY_TEXTURE,
@@ -80,8 +86,10 @@ export class GameScene extends Phaser.Scene {
   private swayTarget = 0; // offset the cloud is easing toward
   private swayDir = 1; // +1 drifting right, -1 drifting left
   private releaseCount = 0; // fruit releases since last sway nudge
+  private keys = 0; // 钥匙余额：解锁一个空位花一把，答题挣
 
   private remainingText!: Phaser.GameObjects.Text;
+  private keyText?: Phaser.GameObjects.Text;
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private bricks: LockBrick[] = []; // locked reserve slots, bottom-up order
 
@@ -123,6 +131,20 @@ export class GameScene extends Phaser.Scene {
     this.swayTarget = 0;
     this.swayDir = 1;
     this.releaseCount = 0;
+
+    // 钥匙钱包。调试跳关用内存里的假余额，绝不碰真存档（和关卡进度一样）。
+    if (this.debugJump) {
+      this.keys = DEBUG_KEYS;
+    } else {
+      const stored = localStorage.getItem(KEY_STORAGE_KEY);
+      if (stored === null) saveKeys(STARTING_KEYS);
+      this.keys = stored === null ? STARTING_KEYS : loadKeys();
+    }
+  }
+
+  /** 钥匙关是否真的生效：题库全空时自动退回「点一下直接解锁」。 */
+  private gateActive(): boolean {
+    return KEY_GATE_ENABLED && availableSubjects().length > 0;
   }
 
   create(): void {
@@ -262,7 +284,7 @@ export class GameScene extends Phaser.Scene {
       });
       const img = this.add.image(0, 0, BRICK_TEXTURE).setDisplaySize(116, SLOT_HEIGHT);
       const label = this.add
-        .text(0, 0, "🔒解锁", {
+        .text(0, 0, this.gateActive() ? "🔑解锁" : "🔒解锁", {
           fontSize: "24px",
           fontStyle: "bold",
           color: "#ffffff",
@@ -320,8 +342,15 @@ export class GameScene extends Phaser.Scene {
 
   private unlockSlot(): void {
     if (this.gameOver) return;
+    // 钥匙不够就是打不开——但这里绝不弹题。急着救场的时候被按住做题，
+    // 孩子恨的是题不是游戏；没钥匙就等这局结束，在结算页慢慢答。
+    if (this.gateActive() && this.keys <= 0) {
+      this.toast("钥匙用完啦\n过关或失败后答题可以攒钥匙");
+      return;
+    }
     const brick = this.bricks.pop();
     if (!brick) return;
+    if (this.gateActive()) this.spendKey();
     this.unlocks++;
     sfx.unlock();
 
@@ -796,6 +825,20 @@ export class GameScene extends Phaser.Scene {
 
     this.makeButton(WIDTH - 110, 1000, "打乱", 0x6fcf5a, () => this.shuffle());
 
+    // 钥匙余额，放在左上角（解锁砖块要花它）
+    if (this.gateActive()) {
+      this.keyText = this.add
+        .text(20, 18, "", {
+          fontSize: "32px",
+          fontStyle: "bold",
+          color: "#ffe066",
+          stroke: "#5a3a1a",
+          strokeThickness: 6,
+        })
+        .setDepth(40);
+      this.updateKeyText();
+    }
+
     // Make a jumped session unmistakable, so a debug run is never confused with
     // real progress (it deliberately doesn't save).
     if (this.debugJump) {
@@ -815,6 +858,46 @@ export class GameScene extends Phaser.Scene {
     this.remainingText.setText(`剩余\n${this.remaining}`);
   }
 
+  private updateKeyText(): void {
+    this.keyText?.setText(`🔑 ${this.keys}`);
+  }
+
+  private spendKey(): void {
+    this.keys = Math.max(0, this.keys - 1);
+    if (!this.debugJump) saveKeys(this.keys);
+    this.updateKeyText();
+  }
+
+  private earnKey(): void {
+    this.keys++;
+    if (!this.debugJump) saveKeys(this.keys);
+    this.updateKeyText();
+  }
+
+  /** 一行会飘走的提示（钥匙不够之类），不打断操作。 */
+  private toast(msg: string): void {
+    const t = this.add
+      .text(WIDTH / 2, 760, msg, {
+        fontSize: "30px",
+        fontStyle: "bold",
+        color: "#ffffff",
+        align: "center",
+        stroke: "#8a3a1a",
+        strokeThickness: 7,
+      })
+      .setOrigin(0.5)
+      .setDepth(45);
+    this.tweens.add({
+      targets: t,
+      y: t.y - 70,
+      alpha: 0,
+      delay: 700,
+      duration: 900,
+      ease: "Sine.easeIn",
+      onComplete: () => t.destroy(),
+    });
+  }
+
   private makeButton(
     x: number,
     y: number,
@@ -822,7 +905,6 @@ export class GameScene extends Phaser.Scene {
     color: number,
     onClick: () => void,
   ): Phaser.GameObjects.Container {
-    const bg = this.add.image(0, 0, BUTTON_TEXTURE).setTint(color).setDisplaySize(168, 78);
     const txt = this.add
       .text(0, -1, label, {
         fontSize: "34px",
@@ -833,7 +915,11 @@ export class GameScene extends Phaser.Scene {
         shadow: { offsetX: 0, offsetY: 3, color: "#1e5825", blur: 0, fill: true },
       })
       .setOrigin(0.5);
-    const c = this.add.container(x, y, [bg, txt]).setDepth(20).setSize(168, 78);
+    // 底板按文字宽度撑开：五个字的「答题攒钥匙」比固定的 168px 还宽，
+    // 写死宽度会让字戳出按钮外面。
+    const w = Math.max(168, Math.ceil(txt.width) + 48);
+    const bg = this.add.image(0, 0, BUTTON_TEXTURE).setTint(color).setDisplaySize(w, 78);
+    const c = this.add.container(x, y, [bg, txt]).setDepth(20).setSize(w, 78);
     c.setInteractive({ useHandCursor: true });
     c.on("pointerdown", onClick);
     return c;
@@ -971,5 +1057,40 @@ export class GameScene extends Phaser.Scene {
 
     const btn = this.makeButton(WIDTH / 2, HEIGHT / 2 + 60, btnLabel, color, onClick);
     btn.setDepth(31);
+
+    // 挣钥匙只在这里 —— 一局已经结束，没人催，答错也不会输掉什么。
+    if (this.gateActive()) {
+      const purse = this.add
+        .text(WIDTH / 2, HEIGHT / 2 + 226, "", {
+          fontSize: "26px",
+          fontStyle: "bold",
+          color: "#ffe9a8",
+          stroke: "#3a2410",
+          strokeThickness: 6,
+        })
+        .setOrigin(0.5)
+        .setDepth(31);
+      const showPurse = () => purse.setText(`当前钥匙 🔑 ${this.keys}`);
+      showPurse();
+
+      const quiz = this.makeButton(
+        WIDTH / 2,
+        HEIGHT / 2 + 165,
+        "答题攒钥匙",
+        0x3d8ec9,
+        () => {
+          quiz.disableInteractive();
+          showQuizPanel(this, {
+            rounds: QUIZ_ROUNDS,
+            onCorrect: () => {
+              this.earnKey();
+              showPurse();
+            },
+            onClose: () => quiz.setInteractive({ useHandCursor: true }),
+          });
+        },
+      );
+      quiz.setDepth(31);
+    }
   }
 }
