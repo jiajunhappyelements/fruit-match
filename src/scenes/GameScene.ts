@@ -113,13 +113,17 @@ export class GameScene extends Phaser.Scene {
 
     // Restart passes the level explicitly; a fresh page load resumes from the
     // last level the kid reached (saved on every win).
-    const saved = Number(localStorage.getItem(LEVEL_STORAGE_KEY));
+    // 存档里的值一律当不可信输入处理：取整（小数会让 fruitCount 变小数，
+    // buildTypePool 设置数组长度时抛 RangeError → 白屏），并夹到合理范围
+    // （上限留 TOTAL_LEVELS+1，因为通关最后一关时会先存 142 再弹大结局）。
+    const savedRaw = Number(localStorage.getItem(LEVEL_STORAGE_KEY));
+    const saved = Number.isFinite(savedRaw) ? Math.floor(savedRaw) : 0;
     this.level =
       data.level ??
       (hasJump
         ? Math.floor(jumped)
-        : Number.isFinite(saved) && saved >= 1
-          ? saved
+        : saved >= 1
+          ? Math.min(saved, TOTAL_LEVELS + 1)
           : 1);
     // Higher levels raise the whole well, deepening the channel to expose
     // locked reserve slots AND squeezing the board space above.

@@ -62,6 +62,10 @@ export function levelConfig(level: number): {
   typeCount: number;
   fruitCount: number;
 } {
+  // 兜底：任何非整数都会让下面的 fruitCount 变成小数，而 buildTypePool 里
+  // `pool.length = fruitCount` 遇到小数直接抛 RangeError → 白屏。存档被写坏
+  // （手改、或将来某个 bug）就会走到这里，所以在源头把它按整数处理。
+  level = Math.max(1, Math.floor(Number.isFinite(level) ? level : 1));
   // Variety ramps over the first ~60 levels (roughly the first two thirds of
   // the journey) rather than 26, so the long trip keeps introducing something.
   // +1 type every 2 levels after a gentle 3-type start.
