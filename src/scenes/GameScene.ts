@@ -435,8 +435,8 @@ export class GameScene extends Phaser.Scene {
       // x 先在整个外接矩形里取，再把落到梯形外面的丢掉 —— 这样得到的是
       // 按面积均匀的密度；直接在带宽内取会让窄的底部挤成一团。
       const x = Phaser.Math.FloatBetween(
-        WIDTH / 2 - SCATTER_HALF_TOP,
-        WIDTH / 2 + SCATTER_HALF_TOP,
+        WIDTH / 2 - this.halfWidthCap(),
+        WIDTH / 2 + this.halfWidthCap(),
       );
       // 落在梯形外属于几何问题，不算「这一层满了」，所以不计入 misses。
       if (Math.abs(x - WIDTH / 2) > this.bandHalfWidth(y)) continue;
@@ -455,12 +455,21 @@ export class GameScene extends Phaser.Scene {
     return pts;
   }
 
+  // 这一关水果堆允许的最大半宽。有横向漂移的关卡先把漂移幅度扣掉：
+  // 否则撒在最边上的水果（中心 x=70）被漂移推到 x=0 时，正好一半被屏幕
+  // 边线切掉。扣掉之后荡到 ±SWAY_MAX 的极值也仍然整颗在屏内。
+  private halfWidthCap(): number {
+    return SCATTER_HALF_TOP - (this.sway ? SWAY_MAX : 0);
+  }
+
   // Band half-width at a given y: tapers toward the (possibly raised) funnel
   // mouth inside the visible band, full width above it (the supply strip).
   private bandHalfWidth(y: number): number {
-    if (y <= SCATTER_TOP) return SCATTER_HALF_TOP;
+    const cap = this.halfWidthCap();
+    if (y <= SCATTER_TOP) return cap;
     const t = Math.min(1, (y - SCATTER_TOP) / (this.boardBottom() - SCATTER_TOP));
-    return Phaser.Math.Linear(SCATTER_HALF_TOP, SCATTER_HALF_BOTTOM, t);
+    // 下半段本来就比 cap 窄，取 min 只影响上面那段满宽区域。
+    return Math.min(cap, Phaser.Math.Linear(SCATTER_HALF_TOP, SCATTER_HALF_BOTTOM, t));
   }
 
   // ---------------------------------------------------------------------------
