@@ -455,17 +455,33 @@ export class GameScene extends Phaser.Scene {
       topmost += dy;
     }
 
-    this.trySpawnAbove(topmost);
+    this.trySpawnAbove(topmost, pinned.length);
   }
 
   // Dart-throw ONE queued fruit into the strip above the topmost pinned fruit,
   // keeping the off-screen buffer stocked. One per frame keeps pop-in gradual.
-  private trySpawnAbove(topmost: number): void {
-    if (this.pending.length === 0 || topmost <= SPAWN_CEILING) return;
+  private trySpawnAbove(topmost: number, pinnedCount: number): void {
+    if (this.pending.length === 0) return;
+
+    // Keeping stock is gated on TWO things, not just the topmost fruit's
+    // height. Height alone softlocks a level once the board thins out: a
+    // single stray fruit drifting above SPAWN_CEILING blocks every restock
+    // while the queue still holds the fruit the player needs, and if the
+    // lowest fruit already sits at boardBottom nothing sinks to break the
+    // deadlock either — the level becomes unwinnable.
+    const understocked = pinnedCount < INITIAL_VISIBLE;
+    if (!understocked && topmost <= SPAWN_CEILING) return;
+
+    // When understocked, seed at the top of the visible band rather than ever
+    // higher above an off-screen stray, so refills actually reach the player.
+    const from = understocked
+      ? Math.max(topmost, SCATTER_TOP + 150)
+      : topmost;
+
     // New fruit joins the drifting cloud, so bias its column by the sway offset.
     const centre = WIDTH / 2 + this.swayX;
     for (let i = 0; i < 20; i++) {
-      const y = Phaser.Math.FloatBetween(topmost - 150, topmost - 60);
+      const y = Phaser.Math.FloatBetween(from - 150, from - 60);
       const half = this.bandHalfWidth(y);
       const x = Phaser.Math.FloatBetween(centre - half, centre + half);
       const clear = !this.fruits.some(
@@ -785,9 +801,43 @@ export class GameScene extends Phaser.Scene {
   private shuffle(): void {
     if (this.gameOver) return;
     sfx.shuffle();
+
+    // Genuinely REORDER the settled basket stack. A random impulse alone can
+    // never rescue an interleaved stack (banana/strawberry/banana/strawberry):
+    // the channel is barely wider than one fruit, so everything drops back in
+    // the same order and two matching fruits stay forever separated — a dead
+    // end with no way out. Permuting which fruit occupies which slot is what
+    // "打乱" promises, and it is the only escape from that state.
+    const settled: Fruit[] = [];
+    for (const fruit of this.fruits) {
+      if (!fruit.getData("released")) continue;
+      const body = fruit.body as MatterJS.BodyType;
+      if (this.dying.has(body)) continue;
+      if (Math.hypot(body.velocity.x, body.velocity.y) >= SETTLED_SPEED) continue;
+      if (
+        fruit.y > this.basketMinY() &&
+        fruit.x > WELL_COUNT_X_MIN &&
+        fruit.x < WELL_COUNT_X_MAX
+      ) {
+        settled.push(fruit);
+      }
+    }
+    if (settled.length > 1) {
+      const slots = settled
+        .map((f) => ({ x: f.x, y: f.y }))
+        .sort((a, b) => a.y - b.y);
+      Phaser.Utils.Array.Shuffle(settled).forEach((fruit, i) => {
+        (fruit as any).setPosition(slots[i].x, slots[i].y);
+        (fruit as any).setVelocity(0, 0);
+      });
+      this.sparkEmitter.explode(8, WIDTH / 2, slots[slots.length - 1].y);
+    }
+
+    // Everything else that is loose still gets a jolt, to free physical jams.
     for (const fruit of this.fruits) {
       if (!fruit.getData("released")) continue;
       if (this.dying.has(fruit.body as MatterJS.BodyType)) continue;
+      if (settled.includes(fruit)) continue;
       (fruit as any).setVelocity(
         Phaser.Math.FloatBetween(-7, 7),
         Phaser.Math.FloatBetween(-11, -3),
