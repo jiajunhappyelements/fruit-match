@@ -28,12 +28,12 @@
         touch-action: none;
         -webkit-tap-highlight-color: transparent;
       }
+      /* Phaser's Scale.CENTER_BOTH already centres the canvas by setting its
+         margins. Centring here as well (e.g. with flex) double-applies the
+         offset and pushes the canvas off to one side on wide screens. */
       #game {
         width: 100vw;
         height: 100dvh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
       }
       canvas {
         display: block;

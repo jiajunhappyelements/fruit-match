@@ -56,8 +56,8 @@ export const FRUIT_TYPES: FruitType[] = [
 
 // --- Level progression -------------------------------------------------------
 // Difficulty climbs by adding fruit VARIETY (more types = harder to pair) and
-// volume. Level 1: 3 types / 34 fruits — gentle for a kid. Both cap out around
-// level 40-53, well inside the ~141-level journey (see levels.ts).
+// volume. Level 1: 3 types / 34 fruits — gentle for a kid. Count caps at L22,
+// variety at L51, both well inside the ~141-level journey (see levels.ts).
 export function levelConfig(level: number): {
   typeCount: number;
   fruitCount: number;
@@ -68,7 +68,7 @@ export function levelConfig(level: number): {
   const typeCount = Math.min(3 + Math.floor((level - 1) / 2), FRUIT_TYPES.length);
   // Big pools like the original game ("剩余 172"): only ~INITIAL_VISIBLE are on
   // screen at once, the rest queue up and feed in from above as the board sinks.
-  // +6 per level caps at 160 around level 40.
+  // +6 per level, reaching the 160 cap at level 22.
   const raw = Math.min(28 + level * 6, 160);
   const fruitCount = raw % 2 === 0 ? raw : raw + 1; // keep it even so pairs work
   return { typeCount, fruitCount };
