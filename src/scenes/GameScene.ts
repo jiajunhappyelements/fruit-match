@@ -74,6 +74,7 @@ export class GameScene extends Phaser.Scene {
   private unlocks = 0; // reserve slots opened this level
   private raise = 0; // how far the whole well is shifted up this level (px)
   private place!: Place; // where this level sits on the China journey
+  private debugJump = false; // reached via ?level=N — don't persist progress
   private sway = false; // does the pinned cloud drift sideways this level?
   private swayX = 0; // current lateral offset of the pinned cloud (px)
   private swayTarget = 0; // offset the cloud is easing toward
@@ -94,11 +95,25 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  init(data: { level?: number }): void {
+  init(data: { level?: number; debug?: boolean }): void {
+    // Testing back door: "?level=24" jumps straight to a level. It is
+    // deliberately URL-only (a kid won't stumble on it) and EPHEMERAL — a
+    // jumped session never writes progress, so peeking at level 90 can't wipe
+    // the save. window.fmGoto(n) in the console does the same thing.
+    const jumped = Number(new URLSearchParams(location.search).get("level"));
+    const hasJump = Number.isFinite(jumped) && jumped >= 1;
+    this.debugJump = data.debug ?? hasJump;
+
     // Restart passes the level explicitly; a fresh page load resumes from the
     // last level the kid reached (saved on every win).
     const saved = Number(localStorage.getItem(LEVEL_STORAGE_KEY));
-    this.level = data.level ?? (Number.isFinite(saved) && saved >= 1 ? saved : 1);
+    this.level =
+      data.level ??
+      (hasJump
+        ? Math.floor(jumped)
+        : Number.isFinite(saved) && saved >= 1
+          ? saved
+          : 1);
     // Higher levels raise the whole well, deepening the channel to expose
     // locked reserve slots AND squeezing the board space above.
     this.raise = unlockSlotsForLevel(this.level) * SLOT_HEIGHT;
@@ -129,7 +144,15 @@ export class GameScene extends Phaser.Scene {
     // Browsers only allow audio to start from a user gesture.
     this.input.once("pointerdown", unlockAudio);
 
-    if ((import.meta as any).env?.DEV) (window as any).__scene = this;
+    // Console helper, always available: fmGoto(24) reloads straight into a level.
+    (window as any).fmGoto = (n: number) => {
+      location.search = `?level=${Math.max(1, Math.floor(n))}`;
+    };
+    // The scene handle is exposed in dev, and in any ?level= debug session so
+    // the deployed build can be inspected the same way.
+    if ((import.meta as any).env?.DEV || this.debugJump) {
+      (window as any).__scene = this;
+    }
 
     // NOTE: elimination is NOT event-driven. Matching is a continuous
     // contact-distance check in update() — collisionstart is edge-triggered
@@ -772,6 +795,20 @@ export class GameScene extends Phaser.Scene {
       .setDepth(25);
 
     this.makeButton(WIDTH - 110, 1000, "打乱", 0x6fcf5a, () => this.shuffle());
+
+    // Make a jumped session unmistakable, so a debug run is never confused with
+    // real progress (it deliberately doesn't save).
+    if (this.debugJump) {
+      this.add
+        .text(WIDTH - 12, 12, "调试 · 不存进度", {
+          fontSize: "20px",
+          color: "#ffd76e",
+          stroke: "#5a3a1a",
+          strokeThickness: 4,
+        })
+        .setOrigin(1, 0)
+        .setDepth(40);
+    }
   }
 
   private updateRemaining(): void {
@@ -853,7 +890,7 @@ export class GameScene extends Phaser.Scene {
     sfx.win();
     // Save progress FIRST so the next level survives a page close/reload.
     const next = this.level + 1;
-    localStorage.setItem(LEVEL_STORAGE_KEY, String(next));
+    if (!this.debugJump) localStorage.setItem(LEVEL_STORAGE_KEY, String(next));
 
     // Finished the whole country?
     if (isJourneyComplete(next)) {
@@ -862,8 +899,8 @@ export class GameScene extends Phaser.Scene {
         0xe8a33d,
         "再玩一遍",
         () => {
-          localStorage.setItem(LEVEL_STORAGE_KEY, "1");
-          this.scene.restart({ level: 1 });
+          if (!this.debugJump) localStorage.setItem(LEVEL_STORAGE_KEY, "1");
+          this.scene.restart({ level: 1, debug: this.debugJump });
         },
         `你走遍了 ${REGIONS.length} 个省市自治区，共 ${TOTAL_LEVELS} 关`,
       );
@@ -882,7 +919,7 @@ export class GameScene extends Phaser.Scene {
       "恭喜过关！",
       0x3aa655,
       "下一关",
-      () => this.scene.restart({ level: next }),
+      () => this.scene.restart({ level: next, debug: this.debugJump }),
       subtitle,
     );
   }
@@ -893,7 +930,7 @@ export class GameScene extends Phaser.Scene {
       "装不下啦",
       0xd9534f,
       "再玩一次",
-      () => this.scene.restart({ level: this.level }),
+      () => this.scene.restart({ level: this.level, debug: this.debugJump }),
       `${this.place.region}-${this.place.city}`,
     );
   }
