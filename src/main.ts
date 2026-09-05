@@ -15,7 +15,11 @@ const config: Phaser.Types.Core.GameConfig = {
   physics: {
     default: "matter",
     matter: {
-      gravity: { x: 0, y: 0.85 },
+      // 下落手感：1006px 的自由落体 0.85→1.83s、1.3→1.43s（快 22%）。
+      // 卡手感的是重力不是 MAX_FALL_SPEED —— 0.85 时峰值只有 15.6，
+      // 根本碰不到 22 的限速；1.3 时峰值 20.6，仍在限速内、离最薄的墙(40px)
+      // 还有近一倍余量。再往上到 1.5 就顶到限速了，加也白加。
+      gravity: { x: 0, y: 1.3 },
       // More solver iterations so fast-falling fruit can't tunnel through walls.
       positionIterations: 12,
       velocityIterations: 8,
