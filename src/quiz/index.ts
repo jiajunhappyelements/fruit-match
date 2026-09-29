@@ -9,8 +9,10 @@ import type { Generator, Question, Subject } from "./types";
 import { MATH_BANK } from "./math";
 import { CHINESE_BANK } from "./chinese";
 import { ENGLISH_BANK } from "./english";
+import { topicStats, topicWeight } from "./history";
 
 export type { Question, Subject } from "./types";
+export { recordAnswer, loadHistory, topicStats, HISTORY_KEY } from "./history";
 
 const BANKS: Record<Subject, Generator[]> = {
   math: MATH_BANK,
@@ -23,18 +25,39 @@ export function availableSubjects(): Subject[] {
   return (Object.keys(BANKS) as Subject[]).filter((s) => BANKS[s].length > 0);
 }
 
-/** 抽一道题；尽量不和上一道同一个知识点，免得连着考同一块。 */
+/**
+ * 抽一道题：错得多的题型多出，并且尽量不和上一道同一个知识点。
+ *
+ * 做法是先生成一批候选，再按题型权重挑一道。不能提前按生成器加权——
+ * 生成器是现算的，同一个生成器可能产出不同题型（小数那个既出加减也出比大小），
+ * 只有生成出来才知道它是哪一类。
+ */
 export function nextQuestion(avoidTopic?: string): Question | null {
   const subjects = availableSubjects();
   if (subjects.length === 0) return null;
-  let q: Question | null = null;
-  for (let i = 0; i < 6; i++) {
+  const stats = topicStats();
+
+  const candidates: Question[] = [];
+  for (let i = 0; i < 12; i++) {
     const subject = subjects[Math.floor(Math.random() * subjects.length)];
     const bank = BANKS[subject];
-    q = bank[Math.floor(Math.random() * bank.length)]();
-    if (q.topic !== avoidTopic) return q;
+    const q = bank[Math.floor(Math.random() * bank.length)]();
+    if (q.topic !== avoidTopic) candidates.push(q);
   }
-  return q;
+  // 极端情况（只剩一个题型）就不避了，总得出一道
+  if (candidates.length === 0) {
+    const subject = subjects[Math.floor(Math.random() * subjects.length)];
+    const bank = BANKS[subject];
+    return bank[Math.floor(Math.random() * bank.length)]();
+  }
+
+  const weights = candidates.map((q) => topicWeight(q.topic, stats));
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
 }
 
 // --- 钥匙钱包 ---------------------------------------------------------------

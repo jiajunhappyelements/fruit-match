@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { WIDTH, HEIGHT } from "./config";
 import { GameScene } from "./scenes/GameScene";
+import { renderParentReport } from "./parent";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -29,7 +30,12 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [GameScene],
 };
 
-new Phaser.Game(config);
+// ?parent=1 → 家长看板（普通网页），不启动游戏。孩子点图标进来永远走下面那条。
+if (new URLSearchParams(location.search).has("parent")) {
+  renderParentReport();
+} else {
+  new Phaser.Game(config);
+}
 
 // 注册 service worker —— 这是 Chrome 安卓版把网页当「应用」安装的前提，
 // 装出来才会全屏启动而不是开一个 Chrome 页签（顺带离线可玩）。

@@ -19,8 +19,13 @@ execFileSync(
   { cwd: root, stdio: "inherit" },
 );
 // index.ts 摸 localStorage，Node 里没有，给个最小替身
-globalThis.localStorage = { getItem: () => null, setItem: () => {} };
-const { nextQuestion, availableSubjects } = await import(pathToFileURL(out).href);
+const store = new Map();
+globalThis.localStorage = {
+  getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+  removeItem: (k) => store.delete(k),
+};
+const { nextQuestion, availableSubjects, HISTORY_KEY } = await import(pathToFileURL(out).href);
 
 const num = (s) => Number(String(s).replace(/[^0-9.\-]/g, ""));
 const fails = [];
@@ -31,6 +36,9 @@ function checkStructure(q) {
   if (q.options.length !== 4) return "选项不是 4 个";
   if (new Set(q.options).size !== 4) return "选项有重复: " + q.options.join(" / ");
   if (!(q.answer >= 0 && q.answer < 4)) return "answer 下标越界";
+  // 整数题混进小数选项 = 送分（孩子不用算就能排除）
+  if (!q.topic.includes("小数") && /^-?\d+$/.test(q.options[q.answer]) && q.options.some((o) => /^-?\d+\.\d+$/.test(o)))
+    return "整数题里有小数干扰项: " + q.options.join(" / ");
   return null;
 }
 
@@ -112,4 +120,31 @@ if (fails.length) {
   for (const f of fails.slice(0, 20)) console.log("  " + f);
   process.exit(1);
 }
+// --- 抽题加权：错得多的题型真的会被多抽到吗 --------------------------------
+// 模拟「三角形」最近 8 次全错、其余题型最近 8 次全对，比较前后出现比例。
+const share = (topic, n = 6000) => {
+  let hit = 0;
+  for (let i = 0; i < n; i++) if (nextQuestion().topic === topic) hit++;
+  return hit / n;
+};
+store.delete(HISTORY_KEY);
+const TARGET = "三角形";
+const base = share(TARGET);
+const topics = [...seen.keys()].map((k) => k.split("/")[1]);
+const fake = [];
+for (const t of topics) for (let i = 0; i < 8; i++)
+  fake.push({ t: i, subject: "math", topic: t, prompt: "x", picked: "a", answer: "b", ok: t !== TARGET });
+store.set(HISTORY_KEY, JSON.stringify(fake));
+const weighted = share(TARGET);
+const ratio = weighted / base;
+console.log(`\n抽题加权：「${TARGET}」基线 ${(base * 100).toFixed(1)}% → 全错后 ${(weighted * 100).toFixed(1)}%（×${ratio.toFixed(2)}）`);
+if (ratio < 2) {
+  console.log("❌ 错题加权没起作用（期望至少翻倍）");
+  process.exit(1);
+}
+// 记录损坏不能拖垮出题
+store.set(HISTORY_KEY, "{not json");
+if (!nextQuestion()) { console.log("❌ 记录损坏时出不了题"); process.exit(1); }
+store.delete(HISTORY_KEY);
+
 console.log("\n✅ 全部通过");

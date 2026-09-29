@@ -134,7 +134,13 @@ const orderOfOps: Generator = () => {
     "四则运算",
     `${a} × ${d} - ${b} ÷ ${c} = ?`,
     String(ans),
-    [String((a * d - b) / c), String(a * d - b + c), String(a * (d - q))],
+    [
+      // 「从左往右硬算」(a×d−b)÷c 常常除不尽，冒出 259.5 这种小数，孩子一眼就能排除，
+      // 等于送分。除不尽时换成同样常见的错法「忘了先算 b÷c」：a×d−b。
+      Number.isInteger((a * d - b) / c) ? String((a * d - b) / c) : String(a * d - b),
+      String(a * d - b + c),
+      String(a * (d - q)),
+    ],
     `先算 ${a}×${d}=${a * d} 和 ${b}÷${c}=${q}，再相减`,
   );
 };

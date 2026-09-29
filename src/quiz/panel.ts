@@ -5,7 +5,7 @@
 import Phaser from "phaser";
 import { WIDTH, HEIGHT } from "../config";
 import { sfx } from "../audio";
-import { nextQuestion, type Question } from "./index";
+import { nextQuestion, recordAnswer, type Question } from "./index";
 
 const CARD_X = 40;
 const CARD_W = WIDTH - 80;
@@ -18,6 +18,8 @@ export interface QuizPanelOpts {
   /** 每答对一题回调一次，用来加钥匙、刷新 HUD。 */
   onCorrect: () => void;
   onClose: () => void;
+  /** 要不要写答题记录。调试跳关（?level=N）的会话传 false，免得测试数据混进家长看板。 */
+  record: boolean;
 }
 
 export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
@@ -116,6 +118,17 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
     if (locked || !current) return;
     locked = true;
     const right = i === current.answer;
+    if (opts.record) {
+      recordAnswer({
+        t: Date.now(),
+        subject: current.subject,
+        topic: current.topic,
+        prompt: current.prompt,
+        picked: current.options[i],
+        answer: current.options[current.answer],
+        ok: right,
+      });
+    }
     boxes[i].setFillStyle(right ? 0xd7f5cf : 0xffd9d6);
     boxes[i].setStrokeStyle(5, right ? 0x3aa655 : 0xd9534f);
     if (!right) {

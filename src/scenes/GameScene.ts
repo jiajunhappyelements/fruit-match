@@ -1051,6 +1051,7 @@ export class GameScene extends Phaser.Scene {
               showPurse();
             },
             onClose: () => quiz.setInteractive({ useHandCursor: true }),
+            record: !this.debugJump,
           });
         },
       );
