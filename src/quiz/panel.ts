@@ -13,6 +13,14 @@ const CARD_Y = 210;
 const CARD_H = 860;
 const DEPTH = 60;
 
+// Phaser 用「|MÉqgy」量字高，不含中文；安卓上中文字形比它高，不留白就会被切掉顶部
+// （实测「丈」出头的那一撇被切掉，看起来像少一点的「文」）。
+// 字体也显式给黑体：Phaser 默认 Courier，拼音会变成打字机等宽字。
+const FONT = {
+  fontFamily: '-apple-system, "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
+  padding: { top: 10, bottom: 10 },
+};
+
 export interface QuizPanelOpts {
   rounds: number;
   /** 每答对一题回调一次，用来加钥匙、刷新 HUD。 */
@@ -38,16 +46,18 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
 
   const progress = scene.add
     .text(WIDTH / 2, CARD_Y + 44, "", {
+      ...FONT,
       fontSize: "30px",
       fontStyle: "bold",
       color: "#8a5a24",
     })
     .setOrigin(0.5);
   const topic = scene.add
-    .text(WIDTH / 2, CARD_Y + 88, "", { fontSize: "24px", color: "#a8823f" })
+    .text(WIDTH / 2, CARD_Y + 88, "", { ...FONT, fontSize: "24px", color: "#a8823f" })
     .setOrigin(0.5);
   const prompt = scene.add
-    .text(WIDTH / 2, CARD_Y + 190, "", {
+    .text(WIDTH / 2, CARD_Y + 200, "", {
+      ...FONT,
       fontSize: "36px",
       fontStyle: "bold",
       color: "#3b2b17",
@@ -57,6 +67,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
     .setOrigin(0.5);
   const feedback = scene.add
     .text(WIDTH / 2, CARD_Y + CARD_H - 78, "", {
+      ...FONT,
       fontSize: "26px",
       fontStyle: "bold",
       color: "#3aa655",
@@ -69,7 +80,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
   // 四个选项按钮，复用同一批对象逐题换文字（不反复创建销毁）
   const OPT_W = CARD_W - 90;
   const OPT_H = 84;
-  const OPT_TOP = CARD_Y + 300;
+  const OPT_TOP = CARD_Y + 330; // 古诗题题面有 3 行，给足空间
   const boxes: Phaser.GameObjects.Rectangle[] = [];
   const labels: Phaser.GameObjects.Text[] = [];
   for (let i = 0; i < 4; i++) {
@@ -79,7 +90,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       .setStrokeStyle(4, 0xd8b98a)
       .setInteractive({ useHandCursor: true });
     const label = scene.add
-      .text(WIDTH / 2, y, "", { fontSize: "34px", color: "#3b2b17" })
+      .text(WIDTH / 2, y, "", { ...FONT, fontSize: "34px", color: "#3b2b17" })
       .setOrigin(0.5);
     box.on("pointerdown", () => choose(i));
     boxes.push(box);
@@ -167,6 +178,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       .setInteractive({ useHandCursor: true });
     const btnTxt = scene.add
       .text(WIDTH / 2, CARD_Y + CARD_H - 150, "好的", {
+        ...FONT,
         fontSize: "38px",
         fontStyle: "bold",
         color: "#ffffff",
