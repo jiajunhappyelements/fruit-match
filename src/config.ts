@@ -167,7 +167,7 @@ export function unlockSlotsForLevel(level: number): number {
 // Sawn-log stumps protrude from the side walls at higher levels (like the
 // original's level-30+ boards). They only collide with RELEASED fruit:
 // edge drops get deflected unpredictably, and a fruit can even come to rest
-// on top of one until 打乱 shakes it loose. Pinned fruit ignores them, so the
+// on top of one until 打乱 shakes it loose (打乱 still jolts loose fruit outside the basket). Pinned fruit ignores them, so the
 // sinking conveyor never jams.
 export const STUMP_RADIUS = 36; // physics circle
 export const STUMP_INSET = 30; // stump centre distance from the screen edge

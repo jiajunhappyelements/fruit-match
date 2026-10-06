@@ -700,7 +700,7 @@ export class GameScene extends Phaser.Scene {
     // channel stacks fruit serially, so a pair separated by another fruit must
     // stay blocked — e.g. watermelon/apple/watermelon does NOT clear. That
     // serial blocking is the well's core difficulty; rescuing the stack means
-    // landing a match ON TOP (or using 打乱 to reorder).
+    // landing a match ON TOP (or using 消除 to pop the top one).
     const contactDist = FRUIT_RADIUS * 2 + CONTACT_EPS;
     const used = new Set<Fruit>();
     let combo = 0;
@@ -946,62 +946,62 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** 打乱有没有意义：上面钉着的水果至少有两种，换了内容才会不一样。 */
+  private canShuffle(): boolean {
+    return new Set(this.pinnedFruits().map((f) => f.getData("ftype"))).size >= 2;
+  }
+
   private tryShuffle(): void {
     if (this.gameOver || this.quizOpen) return;
-    const loose = this.fruits.some(
-      (f) => f.getData("released") && !this.dying.has(f.body as MatterJS.BodyType),
-    );
-    if (!loose) {
-      this.toast("下面还没有水果，不用打乱");
+    if (!this.canShuffle()) {
+      this.toast("上面的水果都一样，不用打乱");
       return;
     }
     this.withQuiz("打乱", () => this.shuffle());
   }
 
+  /**
+   * 原版的打乱：上面钉着的水果**位置一个不动，只互相交换内容**；槽里的不管。
+   * 换的是种类（贴图 + ftype），不是位置，所以物理体、水果堆的形状、下移逻辑
+   * 都不受影响。每种水果的数量也不变 —— 「每种都是偶数个」这条保证能通关的
+   * 不变量自然保住。
+   *
+   * 另外保留旧版打乱的一个副作用：槽外面卡住的水果（搁在木桩上、楔在果堆里）
+   * 弹一下。这是它们唯一的出路 —— 卡在木桩上的水果永远到不了槽里，剩余数
+   * 就归不了零，这一关打不完。槽里的照原版一个不碰。
+   */
   private shuffle(): void {
     if (this.gameOver) return;
+    const pinned = this.pinnedFruits();
+    const before = pinned.map((f) => f.getData("ftype") as string);
+    if (new Set(before).size < 2) return;
+
+    // 纯随机可能洗出和原来一模一样的顺序（剩两颗时一半概率），孩子答完题却
+    // 什么都没变。所以洗到和原来不同为止 —— 至少有两种水果，必然洗得出来。
+    let after = before;
+    while (after.every((t, i) => t === before[i])) {
+      after = Phaser.Utils.Array.Shuffle([...before]);
+    }
+
     sfx.shuffle();
-
-    // Genuinely REORDER the settled basket stack. A random impulse alone can
-    // never rescue an interleaved stack (banana/strawberry/banana/strawberry):
-    // the channel is barely wider than one fruit, so everything drops back in
-    // the same order and two matching fruits stay forever separated — a dead
-    // end with no way out. Permuting which fruit occupies which slot is what
-    // "打乱" promises, and it is the only escape from that state.
-    const settled: Fruit[] = [];
-    for (const fruit of this.fruits) {
-      if (!fruit.getData("released")) continue;
-      const body = fruit.body as MatterJS.BodyType;
-      if (this.dying.has(body)) continue;
-      if (Math.hypot(body.velocity.x, body.velocity.y) >= SETTLED_SPEED) continue;
-      if (
-        fruit.y > this.basketMinY() &&
-        fruit.x > WELL_COUNT_X_MIN &&
-        fruit.x < WELL_COUNT_X_MAX
-      ) {
-        settled.push(fruit);
+    pinned.forEach((fruit, i) => {
+      if (after[i] === before[i]) return;
+      fruit.setData("ftype", after[i]);
+      fruit.setTexture(fruitTextureKey(after[i]));
+      // 屏幕里看得见的那些弹一下，让孩子看出「换了」
+      if (fruit.y > 0) {
+        const baseScale = fruit.getData("baseScale") as number;
+        fruit.setScale(baseScale * 0.6);
+        this.tweens.add({ targets: fruit, scale: baseScale, duration: 220, ease: "Back.easeOut" });
+        this.sparkEmitter.explode(2, fruit.x, fruit.y);
       }
-    }
-    if (settled.length > 1) {
-      const slots = settled
-        .map((f) => ({ x: f.x, y: f.y }))
-        .sort((a, b) => a.y - b.y);
-      Phaser.Utils.Array.Shuffle(settled).forEach((fruit, i) => {
-        (fruit as any).setPosition(slots[i].x, slots[i].y);
-        (fruit as any).setVelocity(0, 0);
-      });
-      this.sparkEmitter.explode(8, WIDTH / 2, slots[slots.length - 1].y);
-    }
+    });
 
-    // Everything else that is loose still gets a jolt, to free physical jams.
+    const basket = new Set(this.basketFruits());
     for (const fruit of this.fruits) {
-      if (!fruit.getData("released")) continue;
+      if (!fruit.getData("released") || basket.has(fruit)) continue;
       if (this.dying.has(fruit.body as MatterJS.BodyType)) continue;
-      if (settled.includes(fruit)) continue;
-      (fruit as any).setVelocity(
-        Phaser.Math.FloatBetween(-7, 7),
-        Phaser.Math.FloatBetween(-11, -3),
-      );
+      (fruit as any).setVelocity(Phaser.Math.FloatBetween(-7, 7), Phaser.Math.FloatBetween(-11, -3));
     }
   }
 
