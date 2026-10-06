@@ -25,7 +25,11 @@ globalThis.localStorage = {
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: (k) => store.delete(k),
 };
-const { nextQuestion, availableSubjects, HISTORY_KEY } = await import(pathToFileURL(out).href);
+const {
+  nextQuestion, availableSubjects, HISTORY_KEY,
+  CHINESE_BANK, pinyinDistractors, hasSingleReading, PATTERNS,
+  SHIZI, POEMS, CLASSICAL, OTHER_READINGS,
+} = await import(pathToFileURL(out).href);
 
 const num = (s) => Number(String(s).replace(/[^0-9.\-]/g, ""));
 const fails = [];
@@ -93,6 +97,91 @@ function checkMath(q) {
   return "UNCHECKED";
 }
 
+// 语文逐类核对。课本数据是照片录入的，这里核的是「出题逻辑没把对的说成错的」：
+// 读音题的干扰项不能是这个字的任何一个读音、上下句必须真的相邻。
+function readingsOf(ch) {
+  const s = new Set(OTHER_READINGS[ch] ?? []);
+  for (const z of SHIZI) if (z.char === ch) s.add(z.pinyin);
+  return s;
+}
+function checkChinese(q) {
+  if (q.lesson == null) return "没标课号";
+  if (!q.explain) return "答错时没有讲解";
+  const a = q.options[q.answer];
+  const wrong = q.options.filter((_, i) => i !== q.answer);
+  let m;
+  switch (q.topic) {
+    case "生字读音": {
+      if (!(m = q.prompt.match(/^「(.)」字读什么？$/u))) return "题面格式怪";
+      const ch = m[1];
+      const rows = SHIZI.filter((z) => z.char === ch && z.lesson === q.lesson);
+      if (!rows.length) return `识字表第 ${q.lesson} 课没有「${ch}」`;
+      if (rows.some((z) => z.poly) || readingsOf(ch).size > 1) return `「${ch}」是多音字，不该单独考读音`;
+      if (!rows.some((z) => z.pinyin === a)) return `读音错: 「${ch}」标了 ${a}`;
+      const rs = readingsOf(ch);
+      const bad = wrong.find((o) => rs.has(o));
+      return bad ? `干扰项其实也是「${ch}」的读音: ${bad}` : null;
+    }
+    case "词语结构": {
+      if (!(m = q.prompt.match(/「([A-Z]+)」式/))) return "题面格式怪";
+      const p = PATTERNS.find((x) => x.name === m[1]);
+      if (!p) return "未知结构 " + m[1];
+      if (!p.test([...a])) return `答案「${a}」不是 ${p.name} 式`;
+      const bad = wrong.find((o) => p.test([...o]));
+      return bad ? `干扰项「${bad}」也是 ${p.name} 式` : null;
+    }
+    case "古诗背诵": {
+      if (!(m = q.prompt.match(/^《(.+?)》\n「(?:……，)?(.+?)[，。]」\n(下|上)一句是？$/u))) return "题面格式怪";
+      const poem = POEMS.find((p) => p.title === m[1] && p.lesson === q.lesson);
+      if (!poem) return "找不到这首诗";
+      const i = poem.lines.indexOf(m[2]);
+      if (i < 0) return "题面诗句不在原诗里: " + m[2];
+      const want = m[3] === "下" ? poem.lines[i + 1] : poem.lines[i - 1];
+      if (a !== want) return `上下句错: 「${m[2]}」${m[3]}一句应为「${want}」，标了「${a}」`;
+      return null;
+    }
+    case "诗人朝代": {
+      const poem = POEMS.find((p) => q.prompt.startsWith(`《${p.title}》`) && p.lesson === q.lesson);
+      if (!poem) return "找不到这首诗";
+      if (q.prompt.endsWith("的作者是？")) {
+        if (a !== poem.author) return `作者错: 应为 ${poem.author}`;
+        return wrong.includes(poem.author) ? "干扰项里有正确作者" : null;
+      }
+      return a === `${poem.dynasty}朝` ? null : `朝代错: 应为 ${poem.dynasty}朝`;
+    }
+    case "小古文": {
+      if (!(m = q.prompt.match(/^《(.+?)》\n「(.+?)」\n后面一句是？$/u))) return "题面格式怪";
+      const t = CLASSICAL.find((c) => c.title === m[1]);
+      const i = t ? t.sentences.indexOf(m[2]) : -1;
+      if (i < 0) return "题面句子不在原文里";
+      return a === t.sentences[i + 1] ? null : `应为「${t.sentences[i + 1]}」，标了「${a}」`;
+    }
+    case "课文知识":
+      return null; // 题面和答案原样取自 FACTS，只做结构检查
+    default:
+      return "UNCHECKED";
+  }
+}
+
+// 每个会被考读音的字（非蓝字、只有一个读音）都必须凑得出 3 个干扰项
+const testable = SHIZI.filter((x) => !x.poly && hasSingleReading(x.char));
+console.log(`生字读音：${SHIZI.length} 个字里 ${testable.length} 个可以单独考读音（其余是多音字）`);
+for (const z of testable) {
+  const ds = pinyinDistractors(z.char, z.pinyin);
+  const rs = readingsOf(z.char);
+  if (ds.length < 3) fails.push(`生字读音: 「${z.char}」${z.pinyin} 只凑出 ${ds.length} 个干扰项`);
+  for (const d of ds) if (rs.has(d)) fails.push(`生字读音: 「${z.char}」干扰项 ${d} 是它的另一个读音`);
+}
+
+// 语文题库单独多抽一些：生字 225 个、6 种题型，混在数学里抽的样本不够
+const cnSeen = new Map();
+for (let i = 0; i < 12000; i++) {
+  const q = CHINESE_BANK[Math.floor(Math.random() * CHINESE_BANK.length)]();
+  cnSeen.set(q.topic, (cnSeen.get(q.topic) ?? 0) + 1);
+  const e = checkStructure(q) ?? checkChinese(q);
+  if (e) fails.push(`${q.topic}: ${e} :: ${q.prompt.replace(/\n/g, " ")} → ${q.options.join(" / ")}`);
+}
+
 const N = 500;
 const subjects = availableSubjects();
 if (subjects.length === 0) {
@@ -107,14 +196,15 @@ for (let i = 0; i < N * 12; i++) {
     fails.push(`${q.topic}: ${e1} :: ${q.prompt}`);
     continue;
   }
-  if (q.subject !== "math") continue;
-  const e2 = checkMath(q);
+  const e2 = q.subject === "math" ? checkMath(q) : q.subject === "chinese" ? checkChinese(q) : null;
   if (e2 === "UNCHECKED") fails.push(`${q.topic}: 校验器没覆盖这个题型 :: ${q.prompt}`);
   else if (e2) fails.push(`${q.topic}: ${e2} :: ${q.prompt}`);
 }
 
 console.log(`科目: ${subjects.join("、")}    抽查 ${N * 12} 题`);
 for (const [t, c] of [...seen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
+console.log("\n语文单独抽查 12000 题：");
+for (const [t, c] of [...cnSeen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
 if (fails.length) {
   console.log(`\n❌ 未通过 ${fails.length} 条：`);
   for (const f of fails.slice(0, 20)) console.log("  " + f);

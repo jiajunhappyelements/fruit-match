@@ -16,6 +16,7 @@ export interface Question {
   options: string[]; // always 4, already shuffled
   answer: number; // index into options
   explain?: string; // shown after a wrong answer
+  lesson?: number; // 语文：出自第几课（自检核对题目来源用）
 }
 
 /** A bank is a list of generators so questions never repeat verbatim. */

@@ -13,6 +13,9 @@ import { topicStats, topicWeight } from "./history";
 
 export type { Question, Subject } from "./types";
 export { recordAnswer, loadHistory, topicStats, HISTORY_KEY } from "./history";
+// 自检脚本用
+export { CHINESE_BANK, pinyinDistractors, hasSingleReading, PATTERNS } from "./chinese";
+export { SHIZI, POEMS, CLASSICAL, OTHER_READINGS } from "./chinese-data";
 
 const BANKS: Record<Subject, Generator[]> = {
   math: MATH_BANK,
