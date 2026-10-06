@@ -185,7 +185,7 @@ for (let i = 0; i < 12000; i++) {
 const N = 500;
 const subjects = availableSubjects();
 if (subjects.length === 0) {
-  console.error("题库全空，钥匙关会自动失效");
+  console.error("题库全空，道具会退回「点一下直接生效」");
   process.exit(1);
 }
 for (let i = 0; i < N * 12; i++) {

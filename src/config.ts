@@ -193,12 +193,12 @@ export const SETTLED_SPEED = 0.6;
 // fast-falling fruit from passing straight through the floor/walls.
 export const MAX_FALL_SPEED = 22;
 
-// --- 答题换钥匙 (learning gate) ----------------------------------------------
-// 原版这里是「看广告解锁」。我们换成钥匙：解锁底部空位要花 1 把钥匙，钥匙靠
-// 在结算页答题挣。关键的设计约束——**题目只出现在平静时刻**（过关/失败结算页），
-// 绝不在「篮子快满了、急着解锁」的瞬间弹题，否则做题就成了路障。
-// 钥匙余额跨关保留（localStorage），调试跳关的会话用内存里的假余额，不写存档。
-export const KEY_GATE_ENABLED = true;
-export const QUIZ_ROUNDS = 3; // 一次结算页最多答几题
-export const STARTING_KEYS = 2; // 新玩家的启动资金，第一次遇到砖块不至于干瞪眼
-export const DEBUG_KEYS = 99; // ?level=N 调试会话的余额
+// --- 答题代替看广告 ---------------------------------------------------------
+// 原版的三个道具（解锁底部空位、消除、打乱）都是「看广告才能用」。我们把广告
+// 换成当场连答几道题：答对够数道具才生效，没过可以再点一次重来。答题时游戏暂停，
+// 掉到一半的水果不会趁机把篮子填满。
+// （早先的做法是「结算页答题攒钥匙、局内花钥匙」，为的是不在紧张时刻弹题；
+//  后来用户决定照原版来，钥匙系统整个删掉了。）
+export const QUIZ_GATE_ENABLED = true;
+export const QUIZ_ROUNDS = 3; // 每次连答几题
+export const QUIZ_PASS = 2; // 答对几题算过

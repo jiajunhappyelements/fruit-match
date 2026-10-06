@@ -38,13 +38,12 @@ import {
   SWAY_MAX,
   SWAY_SPEED,
   swayForLevel,
-  KEY_GATE_ENABLED,
+  QUIZ_GATE_ENABLED,
   QUIZ_ROUNDS,
-  STARTING_KEYS,
-  DEBUG_KEYS,
+  QUIZ_PASS,
 } from "../config";
 import { sfx, unlockAudio } from "../audio";
-import { loadKeys, saveKeys, availableSubjects, KEY_STORAGE_KEY } from "../quiz";
+import { availableSubjects } from "../quiz";
 import { showQuizPanel } from "../quiz/panel";
 import { placeOf, isJourneyComplete, TOTAL_LEVELS, REGIONS, type Place } from "../levels";
 import {
@@ -85,10 +84,9 @@ export class GameScene extends Phaser.Scene {
   private swayTarget = 0; // offset the cloud is easing toward
   private swayDir = 1; // +1 drifting right, -1 drifting left
   private releaseCount = 0; // fruit releases since last sway nudge
-  private keys = 0; // 钥匙余额：解锁一个空位花一把，答题挣
+  private quizOpen = false; // 答题面板开着：物理和 update 都停住
 
   private remainingText!: Phaser.GameObjects.Text;
-  private keyText?: Phaser.GameObjects.Text;
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private bricks: LockBrick[] = []; // locked reserve slots, bottom-up order
 
@@ -134,20 +132,37 @@ export class GameScene extends Phaser.Scene {
     this.swayTarget = 0;
     this.swayDir = 1;
     this.releaseCount = 0;
-
-    // 钥匙钱包。调试跳关用内存里的假余额，绝不碰真存档（和关卡进度一样）。
-    if (this.debugJump) {
-      this.keys = DEBUG_KEYS;
-    } else {
-      const stored = localStorage.getItem(KEY_STORAGE_KEY);
-      if (stored === null) saveKeys(STARTING_KEYS);
-      this.keys = stored === null ? STARTING_KEYS : loadKeys();
-    }
   }
 
-  /** 钥匙关是否真的生效：题库全空时自动退回「点一下直接解锁」。 */
-  private gateActive(): boolean {
-    return KEY_GATE_ENABLED && availableSubjects().length > 0;
+  /** 道具要不要先答题：题库全空时自动退回「点一下直接生效」。 */
+  private quizGateActive(): boolean {
+    return QUIZ_GATE_ENABLED && availableSubjects().length > 0;
+  }
+
+  /**
+   * 代替原版的「看广告」：先连答 QUIZ_ROUNDS 题，答对 QUIZ_PASS 题才执行道具。
+   * 答题期间暂停物理和 update——否则正在往下掉的水果会趁孩子答题时把篮子
+   * 填满，判负发生在面板底下。
+   */
+  private withQuiz(what: string, action: () => void): void {
+    if (this.gameOver || this.quizOpen) return;
+    if (!this.quizGateActive()) {
+      action();
+      return;
+    }
+    this.quizOpen = true;
+    this.matter.world.pause();
+    showQuizPanel(this, {
+      what,
+      rounds: QUIZ_ROUNDS,
+      pass: QUIZ_PASS,
+      record: !this.debugJump,
+      onClose: (passed) => {
+        this.quizOpen = false;
+        this.matter.world.resume();
+        if (passed && !this.gameOver) action();
+      },
+    });
   }
 
   create(): void {
@@ -155,6 +170,7 @@ export class GameScene extends Phaser.Scene {
     this.bricks = [];
     this.dying.clear();
     this.gameOver = false;
+    this.quizOpen = false;
     this.overflowMs = 0;
     this.unlocks = 0; // locks reset every level, like the original
 
@@ -287,7 +303,7 @@ export class GameScene extends Phaser.Scene {
       });
       const img = this.add.image(0, 0, BRICK_TEXTURE).setDisplaySize(116, SLOT_HEIGHT);
       const label = this.add
-        .text(0, 0, this.gateActive() ? "🔑解锁" : "🔒解锁", {
+        .text(0, 0, this.quizGateActive() ? "📝解锁" : "🔒解锁", {
           fontSize: "24px",
           fontStyle: "bold",
           color: "#ffffff",
@@ -299,7 +315,7 @@ export class GameScene extends Phaser.Scene {
         .container(WIDTH / 2, cy, [img, label])
         .setDepth(4)
         .setSize(116, SLOT_HEIGHT);
-      container.on("pointerdown", () => this.unlockSlot());
+      container.on("pointerdown", () => this.withQuiz("解锁", () => this.unlockSlot()));
       this.bricks.push({ body, container, label });
     }
     this.refreshBrickLabels();
@@ -345,15 +361,8 @@ export class GameScene extends Phaser.Scene {
 
   private unlockSlot(): void {
     if (this.gameOver) return;
-    // 钥匙不够就是打不开——但这里绝不弹题。急着救场的时候被按住做题，
-    // 孩子恨的是题不是游戏；没钥匙就等这局结束，在结算页慢慢答。
-    if (this.gateActive() && this.keys <= 0) {
-      this.toast("钥匙用完啦\n过关或失败后答题可以攒钥匙");
-      return;
-    }
     const brick = this.bricks.pop();
     if (!brick) return;
-    if (this.gateActive()) this.spendKey();
     this.unlocks++;
     sfx.unlock();
 
@@ -618,6 +627,8 @@ export class GameScene extends Phaser.Scene {
     this.sparkEmitter.explode(12, fruit.x, fruit.y);
 
     // Stop blocking neighbours immediately, then shrink + pop.
+    // 「消除」道具会直接消掉还钉在上面的水果：缩小的 160ms 里不能再被点下来。
+    fruit.disableInteractive();
     (fruit as any).setSensor(true);
     this.tweens.add({
       targets: fruit,
@@ -653,7 +664,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (this.gameOver) return;
+    if (this.gameOver || this.quizOpen) return;
 
     this.updateConveyor(delta);
 
@@ -787,21 +798,9 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(25);
 
-    this.makeButton(WIDTH - 110, 1000, "打乱", 0x6fcf5a, () => this.shuffle());
-
-    // 钥匙余额，放在左上角（解锁砖块要花它）
-    if (this.gateActive()) {
-      this.keyText = this.add
-        .text(20, 18, "", {
-          fontSize: "32px",
-          fontStyle: "bold",
-          color: "#ffe066",
-          stroke: "#5a3a1a",
-          strokeThickness: 6,
-        })
-        .setDepth(40);
-      this.updateKeyText();
-    }
+    // 和原版一样：消除在左下、打乱在右下，用之前都要答题
+    this.makeButton(110, 1150, "消除", 0x6fcf5a, () => this.tryEliminatePair());
+    this.makeButton(WIDTH - 110, 1150, "打乱", 0x6fcf5a, () => this.tryShuffle());
 
     // Make a jumped session unmistakable, so a debug run is never confused with
     // real progress (it deliberately doesn't save).
@@ -822,23 +821,7 @@ export class GameScene extends Phaser.Scene {
     this.remainingText.setText(`剩余\n${this.remaining}`);
   }
 
-  private updateKeyText(): void {
-    this.keyText?.setText(`🔑 ${this.keys}`);
-  }
-
-  private spendKey(): void {
-    this.keys = Math.max(0, this.keys - 1);
-    if (!this.debugJump) saveKeys(this.keys);
-    this.updateKeyText();
-  }
-
-  private earnKey(): void {
-    this.keys++;
-    if (!this.debugJump) saveKeys(this.keys);
-    this.updateKeyText();
-  }
-
-  /** 一行会飘走的提示（钥匙不够之类），不打断操作。 */
+  /** 一行会飘走的提示，不打断操作。 */
   private toast(msg: string): void {
     const t = this.add
       .text(WIDTH / 2, 760, msg, {
@@ -879,7 +862,7 @@ export class GameScene extends Phaser.Scene {
         shadow: { offsetX: 0, offsetY: 3, color: "#1e5825", blur: 0, fill: true },
       })
       .setOrigin(0.5);
-    // 底板按文字宽度撑开：五个字的「答题攒钥匙」比固定的 168px 还宽，
+    // 底板按文字宽度撑开：字多的按钮（比如四五个字）比固定的 168px 还宽，
     // 写死宽度会让字戳出按钮外面。
     const w = Math.max(168, Math.ceil(txt.width) + 48);
     const bg = this.add.image(0, 0, BUTTON_TEXTURE).setTint(color).setDisplaySize(w, 78);
@@ -887,6 +870,92 @@ export class GameScene extends Phaser.Scene {
     c.setInteractive({ useHandCursor: true });
     c.on("pointerdown", onClick);
     return c;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 道具：消除 / 打乱。先检查有没有可做的，没有就提示，免得白答题。
+  // ---------------------------------------------------------------------------
+
+  /** 篮子（底部窄槽）里还活着的水果，从上到下排好。 */
+  private basketFruits(): Fruit[] {
+    return this.fruits
+      .filter((f) => {
+        if (!f.getData("released")) return false;
+        if (this.dying.has(f.body as MatterJS.BodyType)) return false;
+        return f.y > this.basketMinY() && f.x > WELL_COUNT_X_MIN && f.x < WELL_COUNT_X_MAX;
+      })
+      .sort((a, b) => a.y - b.y);
+  }
+
+  /** 还钉在上面、没掉下来的水果。 */
+  private pinnedFruits(): Fruit[] {
+    return this.fruits.filter(
+      (f) => !f.getData("released") && !this.dying.has(f.body as MatterJS.BodyType),
+    );
+  }
+
+  /**
+   * 消除道具要消掉的那一对（原版规则）：
+   * - 槽里有水果：槽里最上面那颗 + 上面还没掉下来的一颗同类。同类挑最低的那颗
+   *   （最可能在屏幕里，孩子看得见它被消掉）。上面没有同类了，就和槽里埋着的
+   *   同类一起消。
+   * - 槽里没水果（或上面的情况都找不到）：在没掉下来的水果里随机找一对同类，
+   *   优先两颗都在屏幕里的。
+   */
+  private findEliminatePair(): [Fruit, Fruit] | null {
+    const pinned = this.pinnedFruits();
+    const basket = this.basketFruits();
+    const top = basket[0];
+    if (top) {
+      const type = top.getData("ftype");
+      const twin =
+        pinned.filter((f) => f.getData("ftype") === type).sort((a, b) => b.y - a.y)[0] ??
+        basket.slice(1).find((f) => f.getData("ftype") === type);
+      if (twin) return [top, twin];
+    }
+
+    const VISIBLE_Y = 140; // HUD 底下才算看得见
+    const byType = new Map<string, Fruit[]>();
+    for (const f of pinned) {
+      const list = byType.get(f.getData("ftype")) ?? [];
+      list.push(f);
+      byType.set(f.getData("ftype"), list);
+    }
+    const pairs = [...byType.values()].filter((l) => l.length >= 2);
+    if (pairs.length === 0) return null;
+    const visiblePairs = pairs.filter((l) => l.filter((f) => f.y > VISIBLE_Y).length >= 2);
+    const list = Phaser.Utils.Array.GetRandom(visiblePairs.length ? visiblePairs : pairs);
+    const candidates = visiblePairs.length ? list.filter((f) => f.y > VISIBLE_Y) : list;
+    const [a, b] = Phaser.Utils.Array.Shuffle([...candidates]);
+    return [a, b];
+  }
+
+  private tryEliminatePair(): void {
+    if (this.gameOver || this.quizOpen) return;
+    if (!this.findEliminatePair()) {
+      this.toast("没有能消除的水果了");
+      return;
+    }
+    this.withQuiz("消除", () => {
+      // 答题期间局面没变（物理暂停了），但还是重新找一次，保证消的是眼前这一对
+      const pair = this.findEliminatePair();
+      if (!pair) return;
+      this.eliminate(pair[0]);
+      this.eliminate(pair[1]);
+      sfx.match(0);
+    });
+  }
+
+  private tryShuffle(): void {
+    if (this.gameOver || this.quizOpen) return;
+    const loose = this.fruits.some(
+      (f) => f.getData("released") && !this.dying.has(f.body as MatterJS.BodyType),
+    );
+    if (!loose) {
+      this.toast("下面还没有水果，不用打乱");
+      return;
+    }
+    this.withQuiz("打乱", () => this.shuffle());
   }
 
   private shuffle(): void {
@@ -1021,41 +1090,5 @@ export class GameScene extends Phaser.Scene {
 
     const btn = this.makeButton(WIDTH / 2, HEIGHT / 2 + 60, btnLabel, color, onClick);
     btn.setDepth(31);
-
-    // 挣钥匙只在这里 —— 一局已经结束，没人催，答错也不会输掉什么。
-    if (this.gateActive()) {
-      const purse = this.add
-        .text(WIDTH / 2, HEIGHT / 2 + 226, "", {
-          fontSize: "26px",
-          fontStyle: "bold",
-          color: "#ffe9a8",
-          stroke: "#3a2410",
-          strokeThickness: 6,
-        })
-        .setOrigin(0.5)
-        .setDepth(31);
-      const showPurse = () => purse.setText(`当前钥匙 🔑 ${this.keys}`);
-      showPurse();
-
-      const quiz = this.makeButton(
-        WIDTH / 2,
-        HEIGHT / 2 + 165,
-        "答题攒钥匙",
-        0x3d8ec9,
-        () => {
-          quiz.disableInteractive();
-          showQuizPanel(this, {
-            rounds: QUIZ_ROUNDS,
-            onCorrect: () => {
-              this.earnKey();
-              showPurse();
-            },
-            onClose: () => quiz.setInteractive({ useHandCursor: true }),
-            record: !this.debugJump,
-          });
-        },
-      );
-      quiz.setDepth(31);
-    }
   }
 }

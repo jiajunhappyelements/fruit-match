@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// 答题面板：结算页点「答题攒钥匙」弹出，答对一题得一把钥匙。
-// 纯 Phaser 对象搭的浮层，不新开 Scene —— 结算页已经 gameOver，主场景是静止的。
+// 答题面板：代替原版的「看广告」。点解锁 / 消除 / 打乱时弹出，连答 rounds 题，
+// 答对 pass 题道具才生效。纯 Phaser 对象搭的浮层，不新开 Scene——打开期间由
+// GameScene 负责暂停物理和 update，这里只管答题。
 // ---------------------------------------------------------------------------
 import Phaser from "phaser";
 import { WIDTH, HEIGHT } from "../config";
@@ -22,10 +23,13 @@ const FONT = {
 };
 
 export interface QuizPanelOpts {
+  /** 道具名，比如「解锁」，显示在标题和结果里 */
+  what: string;
   rounds: number;
-  /** 每答对一题回调一次，用来加钥匙、刷新 HUD。 */
-  onCorrect: () => void;
-  onClose: () => void;
+  /** 答对几题算过 */
+  pass: number;
+  /** 面板关闭时回调，passed = 是否答对够数 */
+  onClose: (passed: boolean) => void;
   /** 要不要写答题记录。调试跳关（?level=N）的会话传 false，免得测试数据混进家长看板。 */
   record: boolean;
 }
@@ -114,9 +118,11 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
   function ask(): void {
     current = nextQuestion(lastTopic);
     if (!current) return finish();
+    // 开发环境给自动化测试看当前题（要知道哪个是对的才能测「过关」那条路）
+    if ((import.meta as any).env?.DEV) (window as any).__quizCurrent = current;
     lastTopic = current.topic;
     round++;
-    progress.setText(`答题攒钥匙  ${round}/${opts.rounds}`);
+    progress.setText(`答题${opts.what}  ${round}/${opts.rounds}`);
     topic.setText(current.topic);
     prompt.setText(current.prompt);
     feedback.setText("");
@@ -148,12 +154,11 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
     }
     if (right) {
       correct++;
-      opts.onCorrect();
       sfx.unlock();
-      feedback.setColor("#3aa655").setText("答对啦，+1 🔑");
+      feedback.setColor("#3aa655").setText(`答对啦！（已对 ${correct} 题，要对 ${opts.pass} 题）`);
     } else {
       sfx.shuffle();
-      feedback.setColor("#c0392b").setText(current.explain ?? "再看看这一题的算法");
+      feedback.setColor("#c0392b").setText(current.explain ?? "再看看这一题");
     }
     scene.time.delayedCall(right ? 750 : 2100, () => {
       if (round >= opts.rounds) finish();
@@ -164,14 +169,17 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
   function finish(): void {
     boxes.forEach((b) => b.disableInteractive().setVisible(false));
     labels.forEach((l) => l.setVisible(false));
+    const passed = correct >= opts.pass;
     topic.setText("");
     progress.setText("答完啦");
     prompt.setText(
-      correct > 0
-        ? `答对 ${correct} 题，拿到 ${correct} 把钥匙 🔑`
-        : "这次一把也没拿到，下次再来～",
+      passed
+        ? `答对 ${correct} 题\n${opts.what}成功！🎉`
+        : `答对 ${correct} 题\n要答对 ${opts.pass} 题才能${opts.what}`,
     );
-    feedback.setColor("#8a5a24").setText("钥匙可以在游戏里点砖块解锁底部空位");
+    feedback
+      .setColor("#8a5a24")
+      .setText(passed ? "" : `再点一次「${opts.what}」可以重新答`);
     const btn = scene.add
       .rectangle(WIDTH / 2, CARD_Y + CARD_H - 150, 280, 88, 0x3aa655)
       .setStrokeStyle(5, 0x24602a)
@@ -186,7 +194,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       .setOrigin(0.5);
     btn.on("pointerdown", () => {
       layer.destroy(true);
-      opts.onClose();
+      opts.onClose(passed);
     });
     layer.add([btn, btnTxt]);
   }

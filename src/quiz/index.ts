@@ -1,9 +1,6 @@
 // ---------------------------------------------------------------------------
-// 钥匙钱包 + 出题入口。
-//
-// 钥匙是「解锁底部空位」的唯一代价（原版是看广告，我们换成做题）。
-// 挣钥匙只发生在**平静时刻**（过关/失败结算页），花钥匙发生在**危急时刻**
-// （篮子快满了点砖解锁）—— 反过来做就是把学习变成路障，孩子会恨做题。
+// 出题入口。原版的道具（解锁 / 消除 / 打乱）要看广告，我们换成当场连答几题，
+// 见 GameScene.withQuiz。
 // ---------------------------------------------------------------------------
 import type { Generator, Question, Subject } from "./types";
 import { MATH_BANK } from "./math";
@@ -61,16 +58,4 @@ export function nextQuestion(avoidTopic?: string): Question | null {
     if (r <= 0) return candidates[i];
   }
   return candidates[candidates.length - 1];
-}
-
-// --- 钥匙钱包 ---------------------------------------------------------------
-export const KEY_STORAGE_KEY = "fruit-match.keys";
-
-export function loadKeys(): number {
-  const n = Number(localStorage.getItem(KEY_STORAGE_KEY));
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-}
-
-export function saveKeys(n: number): void {
-  localStorage.setItem(KEY_STORAGE_KEY, String(Math.max(0, Math.floor(n))));
 }

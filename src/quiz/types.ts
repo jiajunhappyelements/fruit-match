@@ -1,10 +1,8 @@
 // ---------------------------------------------------------------------------
-// 答题换钥匙 — question model.
+// 答题代替看广告 — question model.
 //
-// Design rule (agreed with the user): questions NEVER appear at the moment the
-// player needs a slot. Making the kid answer while the basket is about to
-// overflow turns learning into a toll gate and poisons both. Keys are earned in
-// CALM moments (the win / lose screen) and spent instantly during play.
+// 原版的解锁 / 消除 / 打乱都要看广告，我们换成当场连答几题（答对够数才生效）。
+// 早先的规矩是「题目只在结算页出、局内花钥匙」，后来用户决定照原版来，作废了。
 // ---------------------------------------------------------------------------
 
 export type Subject = "math" | "chinese" | "english";

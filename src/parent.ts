@@ -109,7 +109,7 @@ export function renderParentReport(): void {
   <div class="sub">水果掉掉乐 · 统计的是这台设备上孩子答过的题</div>
   ${
     total === 0
-      ? `<div class="empty">还没有答题记录。<br>孩子过关或失败后点「答题攒钥匙」，就会开始记录。</div>`
+      ? `<div class="empty">还没有答题记录。<br>孩子在游戏里用「解锁 / 消除 / 打乱」时要答题，答过就会开始记录。</div>`
       : `
   <div class="tiles">
     <div class="tile"><b>${total}</b><span>共答题</span></div>
