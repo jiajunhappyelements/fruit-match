@@ -73,8 +73,9 @@ export function levelConfig(level: number): {
   const typeCount = Math.min(3 + Math.floor((level - 1) / 2), FRUIT_TYPES.length);
   // Big pools like the original game ("剩余 172"): 整堆开局就全部摆好，只有一屏
   // 在可见区域内，其余堆在屏幕上方，随着整体下移滑进画面。
-  // +6 per level, reaching the 160 cap at level 22.
-  const raw = Math.min(28 + level * 6, 160);
+  // 蜂窝排布一屏要 ~110 颗才铺满，所以第 1 关就从 120 起步（原版第 2 关 174），
+  // 开局就是满屏水果；之后每关 +2，第 21 关到 160 封顶。难度靠种类，不靠数量。
+  const raw = Math.min(118 + level * 2, 160);
   const fruitCount = raw % 2 === 0 ? raw : raw + 1; // keep it even so pairs work
   return { typeCount, fruitCount };
 }
