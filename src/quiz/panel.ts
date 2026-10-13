@@ -22,6 +22,22 @@ const FONT = {
   padding: { top: 10, bottom: 10 },
 };
 
+// 中文排版的「避头点」：逗号、句号、问号、右引号这类标点不能出现在行首。
+// Phaser 的换行不懂这条，一行刚好排满时，问号会自己掉到下一行
+// （实测「7500000000 改写成用『亿』作单位的数是多少？」第三行只剩一个「？」）。
+// 做法：让 Phaser 先按宽度换行，再看哪一行是标点开头，就把上一行最后一个字挪下来作伴。
+const NO_LINE_START = /^[，。？！、；：）」』》…”’]/u;
+function setWrapped(t: Phaser.GameObjects.Text, str: string): void {
+  t.setText(str);
+  const lines = t.getWrappedText().map((l) => Array.from(l));
+  for (let i = 1; i < lines.length; i++) {
+    while (lines[i].length && NO_LINE_START.test(lines[i][0]) && lines[i - 1].length > 1) {
+      lines[i].unshift(lines[i - 1].pop()!);
+    }
+  }
+  t.setText(lines.map((l) => l.join("")).join("\n"));
+}
+
 export interface QuizPanelOpts {
   /** 道具名，比如「解锁」，显示在标题和结果里 */
   what: string;
@@ -66,7 +82,10 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       fontStyle: "bold",
       color: "#3b2b17",
       align: "center",
-      wordWrap: { width: CARD_W - 70 },
+      // 必须用高级换行：Phaser 默认只在空格处断行，中文句子中间没有空格，整句
+      // 不换行直接冲出卡片（实测「《出塞》的作者王昌龄是哪个朝代的？」宽 792px，
+      // 卡片只有 570px；线上约 14% 的语文题都这样）。高级换行会在字与字之间断开。
+      wordWrap: { width: CARD_W - 70, useAdvancedWrap: true },
     })
     .setOrigin(0.5);
   const feedback = scene.add
@@ -76,7 +95,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       fontStyle: "bold",
       color: "#3aa655",
       align: "center",
-      wordWrap: { width: CARD_W - 60 },
+      wordWrap: { width: CARD_W - 60, useAdvancedWrap: true }, // 讲解同理，古诗讲解常常一整句没有空格
     })
     .setOrigin(0.5);
   layer.add([progress, topic, prompt, feedback]);
@@ -124,7 +143,7 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
     round++;
     progress.setText(`答题${opts.what}  ${round}/${opts.rounds}`);
     topic.setText(current.topic);
-    prompt.setText(current.prompt);
+    setWrapped(prompt, current.prompt);
     feedback.setText("");
     current.options.forEach((o, i) => labels[i].setText(o));
     paintIdle();
@@ -158,7 +177,8 @@ export function showQuizPanel(scene: Phaser.Scene, opts: QuizPanelOpts): void {
       feedback.setColor("#3aa655").setText(`答对啦！（已对 ${correct} 题，要对 ${opts.pass} 题）`);
     } else {
       sfx.shuffle();
-      feedback.setColor("#c0392b").setText(current.explain ?? "再看看这一题");
+      feedback.setColor("#c0392b");
+      setWrapped(feedback, current.explain ?? "再看看这一题");
     }
     scene.time.delayedCall(right ? 750 : 2100, () => {
       if (round >= opts.rounds) finish();
