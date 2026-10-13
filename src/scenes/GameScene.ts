@@ -7,16 +7,14 @@ import {
   CAT_WALL,
   CAT_PINNED,
   CAT_ACTIVE,
+  CAT_STUMP,
   levelConfig,
   LEVEL_STORAGE_KEY,
-  PILE_SLAB,
-  PILE_MISS_LIMIT,
   SINK_SPEED,
-  SCATTER_TOP,
   SCATTER_BOTTOM,
-  SCATTER_HALF_TOP,
-  SCATTER_HALF_BOTTOM,
-  SCATTER_MIN_DIST,
+  PILE_SPACING,
+  PILE_HALF_WIDTH,
+  PILE_JITTER,
   WELL_LEFT_X,
   WELL_RIGHT_X,
   WALL_THICK,
@@ -89,6 +87,7 @@ export class GameScene extends Phaser.Scene {
   private remainingText!: Phaser.GameObjects.Text;
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private bricks: LockBrick[] = []; // locked reserve slots, bottom-up order
+  private stumps: { x: number; y: number }[] = []; // 木桩圆心，释放时判断水果是不是嵌在木桩里
 
   constructor() {
     super("GameScene");
@@ -168,6 +167,7 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.fruits = [];
     this.bricks = [];
+    this.stumps = [];
     this.dying.clear();
     this.gameOver = false;
     this.quizOpen = false;
@@ -349,8 +349,9 @@ export class GameScene extends Phaser.Scene {
         isStatic: true,
         restitution: 0.5, // lively pachinko bounce
         friction: 0.05,
-        collisionFilter: { category: CAT_WALL, mask: CAT_ACTIVE },
+        collisionFilter: { category: CAT_STUMP, mask: CAT_ACTIVE },
       });
+      this.stumps.push({ x, y });
       this.add
         .image(x, y, STUMP_TEXTURE)
         .setDisplaySize(STUMP_RADIUS * 2 + 16, STUMP_RADIUS * 2 + 16)
@@ -427,58 +428,44 @@ export class GameScene extends Phaser.Scene {
     this.remaining = fruitCount;
   }
 
-  // 整堆水果的撒点（原版那种不规则堆，不是网格）。按**面积**均匀 dart-throw，
-  // 任何离已放点小于 SCATTER_MIN_DIST 的候选点都被拒掉，所以水果之间不会叠。
-  //
-  // 高度不预先算：先在可见区域内撒，撒不下了（连续 PILE_MISS_LIMIT 次被挡回）
-  // 就往上再开一层 PILE_SLAB 高的空间接着撒。新开的一层永远是空的，所以循环
-  // 必然推进、不会卡死，水果堆的高度就按这一关的数量自然长出来。
+  // 整堆水果的排布（照原版「大而密」）：从最下面那排（boardBottom）往上，一排一排
+  // 蜂窝式摆，隔行错开半格，直到这一关的水果全部摆完。每颗加一点随机偏移；
+  // 顶上那排没摆满时随机挑位置，所以堆顶是参差的，不是一条直线。
+  // 以前是在倒三角里随机撒点、最小间距 88，天生留空洞，屏上只有原版的四成。
   private scatterPile(count: number): { x: number; y: number }[] {
     const pts: { x: number; y: number }[] = [];
-    let slabBottom = this.boardBottom();
-    let slabTop = SCATTER_TOP; // 第一层就是可见区域
-    let misses = 0;
-
-    while (pts.length < count) {
-      const y = Phaser.Math.FloatBetween(slabTop, slabBottom);
-      // x 先在整个外接矩形里取，再把落到梯形外面的丢掉 —— 这样得到的是
-      // 按面积均匀的密度；直接在带宽内取会让窄的底部挤成一团。
-      const x = Phaser.Math.FloatBetween(
-        WIDTH / 2 - this.halfWidthCap(),
-        WIDTH / 2 + this.halfWidthCap(),
-      );
-      // 落在梯形外属于几何问题，不算「这一层满了」，所以不计入 misses。
-      if (Math.abs(x - WIDTH / 2) > this.bandHalfWidth(y)) continue;
-
-      if (pts.some((q) => Phaser.Math.Distance.Between(q.x, q.y, x, y) < SCATTER_MIN_DIST)) {
-        if (++misses >= PILE_MISS_LIMIT) {
-          slabBottom = slabTop; // 这一层塞满了，往上再开一层
-          slabTop -= PILE_SLAB;
-          misses = 0;
-        }
-        continue;
+    const cap = this.halfWidthCap();
+    const rowH = Math.round(PILE_SPACING * 0.866); // 蜂窝的行距
+    const J = PILE_JITTER;
+    for (let r = 0; pts.length < count; r++) {
+      const y = this.boardBottom() - r * rowH;
+      const shift = r % 2 ? PILE_SPACING / 2 : 0;
+      const xs: number[] = [];
+      for (let k = -10; k <= 10; k++) {
+        const off = k * PILE_SPACING + shift;
+        if (Math.abs(off) <= cap) xs.push(WIDTH / 2 + off);
       }
-      pts.push({ x, y });
-      misses = 0;
+      for (const x of Phaser.Utils.Array.Shuffle(xs)) {
+        if (pts.length >= count) break;
+        pts.push({
+          x: x + Phaser.Math.FloatBetween(-J, J),
+          // 最下面那排只往上偏，保证「最低那颗」就停在 boardBottom 上
+          y: y + (r === 0 ? -Phaser.Math.FloatBetween(0, J) : Phaser.Math.FloatBetween(-J, J)),
+        });
+      }
     }
     return pts;
   }
 
-  // 这一关水果堆允许的最大半宽。有横向漂移的关卡先把漂移幅度扣掉：
-  // 否则撒在最边上的水果（中心 x=70）被漂移推到 x=0 时，正好一半被屏幕
-  // 边线切掉。扣掉之后荡到 ±SWAY_MAX 的极值也仍然整颗在屏内。
+  // 水果堆的半宽。有横向漂移的关卡先扣掉漂移幅度：否则最边上那颗被推到屏幕外、
+  // 一半被切掉。木桩不用避开——嵌在木桩里的水果释放时会先穿过木桩（见 releaseFruit）。
   private halfWidthCap(): number {
-    return SCATTER_HALF_TOP - (this.sway ? SWAY_MAX : 0);
+    return PILE_HALF_WIDTH - (this.sway ? SWAY_MAX : 0);
   }
 
-  // Band half-width at a given y: tapers toward the (possibly raised) funnel
-  // mouth inside the visible band, full width above it (the supply strip).
-  private bandHalfWidth(y: number): number {
-    const cap = this.halfWidthCap();
-    if (y <= SCATTER_TOP) return cap;
-    const t = Math.min(1, (y - SCATTER_TOP) / (this.boardBottom() - SCATTER_TOP));
-    // 下半段本来就比 cap 窄，取 min 只影响上面那段满宽区域。
-    return Math.min(cap, Phaser.Math.Linear(SCATTER_HALF_TOP, SCATTER_HALF_BOTTOM, t));
+  private overlapsStump(f: Fruit): boolean {
+    const r = STUMP_RADIUS + FRUIT_RADIUS;
+    return this.stumps.some((p) => (p.x - f.x) ** 2 + (p.y - f.y) ** 2 < r * r);
   }
 
   // ---------------------------------------------------------------------------
@@ -589,7 +576,13 @@ export class GameScene extends Phaser.Scene {
     // them instead of passing straight through).
     (fruit as any).setStatic(false);
     body.collisionFilter.category = CAT_ACTIVE;
-    body.collisionFilter.mask = CAT_WALL | CAT_ACTIVE | CAT_PINNED;
+    // 水果堆铺满整个宽度，最外面一列会盖在木桩上（钉着的水果本来就不和木桩碰）。
+    // 嵌在木桩里直接释放，物理引擎会把它猛地弹出去；所以先让它穿过木桩往下掉，
+    // 离开木桩之后再恢复碰撞（update 里）。画面上水果本来就画在木桩前面，
+    // 看起来就是「从木桩前面掉下去」；从木桩上方掉下来的照样会被弹开。
+    const ghost = this.overlapsStump(fruit);
+    fruit.setData("ghostStump", ghost);
+    body.collisionFilter.mask = CAT_WALL | CAT_ACTIVE | CAT_PINNED | (ghost ? 0 : CAT_STUMP);
     (fruit as any).setVelocity(0, 0);
     (fruit as any).setAngularVelocity(Phaser.Math.FloatBetween(-0.05, 0.05));
 
@@ -677,6 +670,12 @@ export class GameScene extends Phaser.Scene {
       if (!fruit.getData("released")) continue;
       const body = fruit.body as MatterJS.BodyType;
       if (this.dying.has(body)) continue;
+
+      // 释放时嵌在木桩里的，离开木桩后恢复和木桩的碰撞
+      if (fruit.getData("ghostStump") && !this.overlapsStump(fruit)) {
+        body.collisionFilter.mask |= CAT_STUMP;
+        fruit.setData("ghostStump", false);
+      }
 
       // Clamp speed so nothing can tunnel through a wall in one physics step.
       const speed = Math.hypot(body.velocity.x, body.velocity.y);

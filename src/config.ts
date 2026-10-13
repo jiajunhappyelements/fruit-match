@@ -13,6 +13,7 @@ export const FRUIT_RADIUS = 34;
 export const CAT_WALL = 0x0001; // ground / well walls
 export const CAT_PINNED = 0x0002; // fruits still stuck in the sky
 export const CAT_ACTIVE = 0x0004; // fruits that have been released
+export const CAT_STUMP = 0x0008; // side stumps（单独一类，释放时嵌在木桩里的水果要能先穿过去）
 
 // The playable produce set. Each key maps to public/assets/<pack>/<key>.png.
 // ORDER IS THE DIFFICULTY CURVE: levelConfig unlocks one more type every two
@@ -92,11 +93,6 @@ export const LEVEL_STORAGE_KEY = "fruit-match.level";
 // 整堆预生成之后，这一类 bug 在结构上不存在。
 export const SINK_SPEED = 90; // px per second
 
-// 撒点时向上扩展的步长：当前这一层塞不下了（连续 PILE_MISS_LIMIT 次被最小
-// 间距挡回），就往上再开一层 PILE_SLAB 高的空间继续撒，直到整堆摆完。
-// 水果堆的高度因此是按数量自然长出来的，不用预先算，也不会撒不下。
-export const PILE_SLAB = 240;
-export const PILE_MISS_LIMIT = 200;
 
 // --- Lateral drift (the "隔几步向右移" board) ---------------------------------
 // On higher levels the whole pinned cloud also slides sideways, bouncing
@@ -115,16 +111,21 @@ export function swayForLevel(level: number): boolean {
   return level >= 19;
 }
 
-// Board layout: an ORGANIC scatter (like the original game), not a rigid grid.
-// Fruits are dart-thrown into an inverted-triangle band — wide under the HUD,
-// narrowing toward the funnel mouth — with a minimum spacing between centres so
-// pinned fruits never visually overlap and a falling fruit either rests on one
-// or slips through a gap (never wedges deep and gets ejected).
-export const SCATTER_TOP = 150;
-export const SCATTER_BOTTOM = 830;
-export const SCATTER_HALF_TOP = 290; // band half-width at the top...
-export const SCATTER_HALF_BOTTOM = 100; // ...and just above the funnel mouth
-export const SCATTER_MIN_DIST = 88; // > fruit diameter (~68px) + breathing room
+// 水果堆的排布：照原版「大而密」—— 铺满整个宽度，一排一排几乎挨着。
+// 用蜂窝排布（隔行错开半格）+ 一点随机偏移，不用随机撒点：随机撒点天生留空洞，
+// 最多铺到面积的一半多，怎么调间距都密不起来（2026-10 对照原版截图：原版屏上
+// 约 85 颗，我们旧排布只有 35 颗）。
+//   间距 78：水果可见大小中位数 72px，中间留几个像素的缝；物理直径 68，
+//            所以掉下来的水果过不了两颗之间的缝，会落在下面的水果上（原版就是这样，
+//            得从底下往上消），但旁边一颗被拿走后的空当（78×2−68=88）能掉下去。
+//   半宽 312：一排 9 颗（隔行 8 颗），最外面那颗离屏幕边还有几像素。
+// 最下面那排停在这条线上（离漏斗口保持固定距离 H）。离斜坡顶要留出约一颗水果高的
+// 空当：堆铺满整个宽度以后，边上的水果掉到斜坡上往中间滚，得从最下面那排底下
+// 钻过去；原来 830 只留了 30px，实测会卡在斜坡和旁边那颗钉住的水果之间。原版也留着这一截。
+export const SCATTER_BOTTOM = 790;
+export const PILE_SPACING = 78;
+export const PILE_HALF_WIDTH = 312;
+export const PILE_JITTER = 5; // 随机偏移，看起来不死板
 
 // --- Well geometry (the funnel + narrow basket at the bottom) ---------------
 // The two sloped shoulders guide dropped fruit into a narrow central channel.

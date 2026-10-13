@@ -167,7 +167,7 @@ export const WORDS: Word[] = [
   { unit: 5, en: "tram", zh: "有轨电车" },
   { unit: 5, en: "chug", zh: "（汽车、火车等）突突地缓慢前进", short: "突突地缓慢前进" },
 
-  // --- Unit 6（照片最后一页停在 aunt，后面可能还有）-------------------------------
+  // --- Unit 6（aunt 就是整张单词表的最后一个，用户确认过）-------------------------
   { unit: 6, en: "wheel", zh: "车轮" },
   { unit: 6, en: "left", zh: "向左，朝左" },
   { unit: 6, en: "straight", zh: "笔直地" },
