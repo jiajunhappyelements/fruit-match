@@ -29,6 +29,7 @@ const {
   nextQuestion, availableSubjects, HISTORY_KEY,
   CHINESE_BANK, pinyinDistractors, hasSingleReading, PATTERNS,
   SHIZI, POEMS, CLASSICAL, OTHER_READINGS,
+  ENGLISH_BANK, WORDS, CONFUSABLE, MATH_BANK, SHAPE_FACTS,
 } = await import(pathToFileURL(out).href);
 
 const num = (s) => Number(String(s).replace(/[^0-9.\-]/g, ""));
@@ -40,6 +41,12 @@ function checkStructure(q) {
   if (q.options.length !== 4) return "选项不是 4 个";
   if (new Set(q.options).size !== 4) return "选项有重复: " + q.options.join(" / ");
   if (!(q.answer >= 0 && q.answer < 4)) return "answer 下标越界";
+  // 以前补位逻辑遇到带文字的答案会退成字面上的「选项1」，线上一半的「省略万位」题都带着
+  if (q.options.some((o) => /^选项\d/.test(o))) return "选项里出现了占位字「选项N」: " + q.options.join(" / ");
+  // 答题框 550px、34 号字，一行大约 16 个汉字；留点余量按 15 算
+  const width = (s) => [...s].reduce((w, ch) => w + (ch >= "\u2e80" ? 1 : 0.55), 0);
+  const wide = q.options.find((o) => width(o) > 15);
+  if (wide) return `选项太长，答题框一行放不下: ${wide}`;
   // 整数题混进小数选项 = 送分（孩子不用算就能排除）
   if (!q.topic.includes("小数") && /^-?\d+$/.test(q.options[q.answer]) && q.options.some((o) => /^-?\d+\.\d+$/.test(o)))
     return "整数题里有小数干扰项: " + q.options.join(" / ");
@@ -83,11 +90,43 @@ function checkMath(q) {
   if ((m = p.match(/^(\d+) 平方千米 = /))) return Number(m[1]) * 100 === num(a) ? null : `平方千米换算错: ${a}`;
   if ((m = p.match(/^(\d+) 改写成用「万」/))) return Number(m[1]) / 10000 === num(a) ? null : `改写错: ${a}`;
   if ((m = p.match(/^(\d+) 省略万位/))) return Math.round(Number(m[1]) / 10000) === num(a) ? null : `近似数错: ${a}`;
+  if ((m = p.match(/^(\d+) 改写成用「亿」/))) return Number(m[1]) / 1e8 === num(a) && a.endsWith("亿") ? null : `改写错: ${a}`;
+  if ((m = p.match(/^(\d+) 省略亿位/))) return Math.round(Number(m[1]) / 1e8) === num(a) && a.endsWith("亿") ? null : `近似数错: ${a}`;
+  const angleName = (d) => (d < 90 ? "锐角" : d === 90 ? "直角" : d < 180 ? "钝角" : d === 180 ? "平角" : "周角");
   if ((m = p.match(/^(\d+)° 的角是什么角/))) {
     const d = Number(m[1]);
-    const want = d < 90 ? "锐角" : d === 90 ? "直角" : d < 180 ? "钝角" : "平角";
-    return want === a ? null : `角分类错: ${d}° 应为 ${want}，标了 ${a}`;
+    return angleName(d) === a ? null : `角分类错: ${d}° 应为 ${angleName(d)}，标了 ${a}`;
   }
+  if ((m = p.match(/^钟面上 (\d+) 时整/))) {
+    const h = Number(m[1]);
+    const want = angleName(Math.min(h, 12 - h) * 30);
+    return want === a ? null : `钟面角错: ${h} 时应为 ${want}，标了 ${a}`;
+  }
+  const DEG = { 直角: 90, 平角: 180, 周角: 360 };
+  if ((m = p.match(/^1 个(直角|平角|周角)等于几个(直角|平角|周角)/))) {
+    const want = DEG[m[1]] / DEG[m[2]];
+    return want === num(a) ? null : `角换算错: 应为 ${want}，标了 ${a}`;
+  }
+  if ((m = p.match(/^1 个(直角|平角|周角)是多少度/))) return DEG[m[1]] === num(a) ? null : `角度数错: ${a}`;
+  // 加法模型和乘法模型：题面是固定模板，数字从题面里抠出来重算
+  if ((m = p.match(/^每\S+ (\d+) 元，买 (\d+) \S+要多少元/))) return Number(m[1]) * Number(m[2]) === num(a) ? null : `总价错: ${a}`;
+  if ((m = p.match(/^买 (\d+) \S+一共用了 (\d+) 元，每\S+多少元/))) {
+    const want = Number(m[2]) / Number(m[1]);
+    return Number.isInteger(want) && want === num(a) ? null : `单价错: 应为 ${want}，标了 ${a}`;
+  }
+  if ((m = p.match(/每(?:小时|分钟)\S (\d+) \S+，(\d+) (?:小时|分钟)\S多少/))) return Number(m[1]) * Number(m[2]) === num(a) ? null : `路程错: ${a}`;
+  if ((m = p.match(/ (\d+) (?:小时|分钟)\S了 (\d+) \S+，平均每/))) {
+    const want = Number(m[2]) / Number(m[1]);
+    return Number.isInteger(want) && want === num(a) ? null : `速度错: 应为 ${want}，标了 ${a}`;
+  }
+  if ((m = p.match(/有 (\d+) \S+，\S+有 (\d+) \S+，一共有多少/))) return Number(m[1]) + Number(m[2]) === num(a) ? null : `求和错: ${a}`;
+  if ((m = p.match(/一共有 (\d+) \S+，其中\S+ (\d+) \S+，\S+有多少/))) return Number(m[1]) - Number(m[2]) === num(a) ? null : `求差错: ${a}`;
+  if ((m = p.match(/有 (\d+) \S+，\S+比\S+多 (\d+) \S+，\S+有多少/))) return Number(m[1]) + Number(m[2]) === num(a) ? null : `比多错: ${a}`;
+  if (p.startsWith("单价、数量和总价")) return a === "单价 × 数量 = 总价" ? null : `关系式错: ${a}`;
+  if (p.startsWith("速度、时间和路程")) return a === "速度 × 时间 = 路程" ? null : `关系式错: ${a}`;
+  // 平行四边形和梯形：概念题是手写的，这里核「答案没被洗牌洗错位」
+  const fact = SHAPE_FACTS.find(([fq]) => fq === p);
+  if (fact) return fact[1] === a ? null : `概念题答案错位: 应为 ${fact[1]}，标了 ${a}`;
   if (p.includes("哪个数最大")) {
     const vals = q.options.map(num);
     const max = Math.max(...vals);
@@ -104,6 +143,42 @@ function readingsOf(ch) {
   for (const z of SHIZI) if (z.char === ch) s.add(z.pinyin);
   return s;
 }
+// 英语逐题核对：从题面反查是哪个词，答案必须是它；三个干扰项不能「其实也对」。
+// 「不能也对」的规则这里独立再写一遍，不直接调 english.ts 里的函数——
+// 出题和验题用同一个函数，函数本身写错了就两边一起错。
+const ENG_CONFUSE = new Set(CONFUSABLE.map(([a, b]) => [a, b].sort().join("|")));
+const engCore = (s) => s.replace(/（[^）]*）/g, "").replace(/……/g, "").replace(/\s/g, "");
+const engSenses = (w) => w.zh.split(/[；，！]/).map(engCore).filter((s) => s.length >= 2);
+const engDisplay = (w) => w.short ?? w.zh;
+function engClash(a, b) {
+  if (ENG_CONFUSE.has([a.en, b.en].sort().join("|"))) return "是登记过的近义词";
+  if (engSenses(a).some((s) => engCore(b.zh).includes(s))) return "释义互相包含";
+  if (engSenses(b).some((s) => engCore(a.zh).includes(s))) return "释义互相包含";
+  return null;
+}
+function checkEnglish(q) {
+  let m, w, others;
+  if ((m = q.prompt.match(/^(.+)\n是什么意思？$/))) {
+    w = WORDS.find((x) => x.en === m[1]);
+    if (!w) return "题面里的词不在单词表: " + m[1];
+    if (q.options[q.answer] !== engDisplay(w)) return `答案不是 ${w.en} 的意思`;
+    others = q.options.filter((_, i) => i !== q.answer).map((o) => WORDS.find((x) => engDisplay(x) === o));
+  } else if ((m = q.prompt.match(/^「(.+)」\n用英语怎么说？$/))) {
+    const hits = WORDS.filter((x) => engDisplay(x) === m[1]);
+    if (hits.length !== 1) return `「${m[1]}」在单词表里对应 ${hits.length} 个词，题目有歧义`;
+    w = hits[0];
+    if (q.options[q.answer] !== w.en) return `答案不是「${m[1]}」对应的 ${w.en}`;
+    others = q.options.filter((_, i) => i !== q.answer).map((o) => WORDS.find((x) => x.en === o));
+  } else return "UNCHECKED";
+  if (q.topic !== `Unit ${w.unit} 单词`) return `题型标成了 ${q.topic}，应为 Unit ${w.unit}`;
+  for (const o of others) {
+    if (!o) return "干扰项不在单词表里";
+    const c = engClash(w, o);
+    if (c) return `干扰项 ${o.en} 和答案 ${w.en} ${c}`;
+  }
+  return null;
+}
+
 function checkChinese(q) {
   if (q.lesson == null) return "没标课号";
   if (!q.explain) return "答错时没有讲解";
@@ -182,6 +257,28 @@ for (let i = 0; i < 12000; i++) {
   if (e) fails.push(`${q.topic}: ${e} :: ${q.prompt.replace(/\n/g, " ")} → ${q.options.join(" / ")}`);
 }
 
+// 英语：165 个词条，两种题；先确认每个词都至少有 3 个合格干扰项
+for (const w of WORDS) {
+  const ok = WORDS.filter((o) => o.en !== w.en && engDisplay(o) !== engDisplay(w) && !engClash(w, o));
+  if (ok.length < 3) fails.push(`英语: ${w.en} 只有 ${ok.length} 个合格干扰项`);
+}
+const enSeen = new Map();
+for (let i = 0; i < 12000; i++) {
+  const q = ENGLISH_BANK[i % ENGLISH_BANK.length]();
+  enSeen.set(q.topic, (enSeen.get(q.topic) ?? 0) + 1);
+  const e = checkStructure(q) ?? checkEnglish(q);
+  if (e) fails.push(`英语 ${q.topic}: ${e} :: ${q.prompt.replace(/\n/g, " ")} → ${q.options.join(" / ")}`);
+}
+// 数学：15 个生成器，混在三科里每个只抽到一百多道，单独多抽
+const mathSeen = new Map();
+for (let i = 0; i < 12000; i++) {
+  const q = MATH_BANK[i % MATH_BANK.length]();
+  mathSeen.set(q.topic, (mathSeen.get(q.topic) ?? 0) + 1);
+  const e = checkStructure(q) ?? checkMath(q);
+  if (e === "UNCHECKED") fails.push(`数学 ${q.topic}: 校验器没覆盖这个题型 :: ${q.prompt}`);
+  else if (e) fails.push(`数学 ${q.topic}: ${e} :: ${q.prompt} → ${q.options.join(" / ")}`);
+}
+
 const N = 500;
 const subjects = availableSubjects();
 if (subjects.length === 0) {
@@ -196,7 +293,7 @@ for (let i = 0; i < N * 12; i++) {
     fails.push(`${q.topic}: ${e1} :: ${q.prompt}`);
     continue;
   }
-  const e2 = q.subject === "math" ? checkMath(q) : q.subject === "chinese" ? checkChinese(q) : null;
+  const e2 = q.subject === "math" ? checkMath(q) : q.subject === "chinese" ? checkChinese(q) : checkEnglish(q);
   if (e2 === "UNCHECKED") fails.push(`${q.topic}: 校验器没覆盖这个题型 :: ${q.prompt}`);
   else if (e2) fails.push(`${q.topic}: ${e2} :: ${q.prompt}`);
 }
@@ -205,20 +302,24 @@ console.log(`科目: ${subjects.join("、")}    抽查 ${N * 12} 题`);
 for (const [t, c] of [...seen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
 console.log("\n语文单独抽查 12000 题：");
 for (const [t, c] of [...cnSeen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
+console.log("\n英语单独抽查 12000 题：");
+for (const [t, c] of [...enSeen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
+console.log("\n数学单独抽查 12000 题：");
+for (const [t, c] of [...mathSeen].sort((a, b) => b[1] - a[1])) console.log(`  ${t.padEnd(28)} ${c}`);
 if (fails.length) {
   console.log(`\n❌ 未通过 ${fails.length} 条：`);
   for (const f of fails.slice(0, 20)) console.log("  " + f);
   process.exit(1);
 }
 // --- 抽题加权：错得多的题型真的会被多抽到吗 --------------------------------
-// 模拟「三角形」最近 8 次全错、其余题型最近 8 次全对，比较前后出现比例。
+// 模拟「角的度量」最近 8 次全错、其余题型最近 8 次全对，比较前后出现比例。
 const share = (topic, n = 6000) => {
   let hit = 0;
   for (let i = 0; i < n; i++) if (nextQuestion().topic === topic) hit++;
   return hit / n;
 };
 store.delete(HISTORY_KEY);
-const TARGET = "三角形";
+const TARGET = "角的度量";
 const base = share(TARGET);
 const topics = [...seen.keys()].map((k) => k.split("/")[1]);
 const fake = [];
