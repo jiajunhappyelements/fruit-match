@@ -195,6 +195,12 @@ export const SETTLED_SPEED = 0.6;
 // fast-falling fruit from passing straight through the floor/walls.
 export const MAX_FALL_SPEED = 22;
 
+// 物理快进倍数：每过 1/60 秒真实时间，物理引擎走几步（GameScene.stepPhysics）。
+// 想让水果掉得更快，调这个，不调重力和 MAX_FALL_SPEED：重力 1.5 以上就顶到限速，
+// 再大也白加；放开限速又会穿墙、穿过本该挡住它的水果。快进只是把同一段物理
+// 播快——每一步算法完全不变，水果怎么滚、在哪条缝里卡住都和原来一模一样。
+export const PHYSICS_SPEEDUP = 2;
+
 // --- 答题代替看广告 ---------------------------------------------------------
 // 原版的三个道具（解锁底部空位、消除、打乱）都是「看广告才能用」。我们把广告
 // 换成当场连答几道题：答对够数道具才生效，没过可以再点一次重来。答题时游戏暂停，

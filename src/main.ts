@@ -21,6 +21,9 @@ const config: Phaser.Types.Core.GameConfig = {
       // 根本碰不到 22 的限速；1.3 时峰值 20.6，仍在限速内、离最薄的墙(40px)
       // 还有近一倍余量。再往上到 1.5 就顶到限速了，加也白加。
       gravity: { x: 0, y: 1.3 },
+      // 不让 Phaser 自动步进：GameScene.stepPhysics 自己按 PHYSICS_SPEEDUP 倍速走
+      // （2026-10 试玩嫌掉得慢，要快一倍；重力已经顶到限速，只能快进）。
+      autoUpdate: false,
       // More solver iterations so fast-falling fruit can't tunnel through walls.
       positionIterations: 12,
       velocityIterations: 8,

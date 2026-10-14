@@ -26,6 +26,7 @@ import {
   CONTACT_EPS,
   SETTLED_SPEED,
   MAX_FALL_SPEED,
+  PHYSICS_SPEEDUP,
   SLOT_HEIGHT,
   unlockSlotsForLevel,
   STUMP_RADIUS,
@@ -72,6 +73,7 @@ export class GameScene extends Phaser.Scene {
   private remaining = 0;
   private gameOver = false;
   private overflowMs = 0;
+  private physicsMs = 0; // 还没模拟掉的物理时间，见 stepPhysics
   private level = 1;
   private unlocks = 0; // reserve slots opened this level
   private raise = 0; // how far the whole well is shifted up this level (px)
@@ -172,6 +174,7 @@ export class GameScene extends Phaser.Scene {
     this.gameOver = false;
     this.quizOpen = false;
     this.overflowMs = 0;
+    this.physicsMs = 0;
     this.unlocks = 0; // locks reset every level, like the original
 
     buildArtTextures(this.textures);
@@ -623,6 +626,10 @@ export class GameScene extends Phaser.Scene {
     // 「消除」道具会直接消掉还钉在上面的水果：缩小的 160ms 里不能再被点下来。
     fruit.disableInteractive();
     (fruit as any).setSensor(true);
+    // 原地缩小：不冻住的话这 160ms 里它还在往下掉（物理快进以后能掉 60 多 px，
+    // 井底那颗会先掉出画面再消失）。马上就销毁了，不会再变回动态，没有
+    // isStatic→NaN 那个坑。
+    (fruit as any).setStatic(true);
     this.tweens.add({
       targets: fruit,
       scale: 0,
@@ -656,7 +663,38 @@ export class GameScene extends Phaser.Scene {
     return SCATTER_BOTTOM - this.raise;
   }
 
+  /**
+   * 物理步进（main.ts 里关了 Phaser 的自动步进，由这里接管）。每一步的步长固定
+   * 1/60 秒，和以前一样；只是每过 1/60 秒真实时间走 PHYSICS_SPEEDUP 步，等于把
+   * 物理快进播放。每走一步就限一次速：一帧里要走好几步，只在帧末限速的话，
+   * 第一步撞出来的高速会在第二步里直接穿墙。
+   */
+  private stepPhysics(delta: number): void {
+    if (!this.matter.world.enabled) return; // 答题时 pause() 了
+    const STEP = 1000 / 60;
+    // 封顶 3 帧的量：切到后台再回来、或者卡了一下，不要一口气补算一大堆步
+    this.physicsMs = Math.min(this.physicsMs + delta * PHYSICS_SPEEDUP, STEP * PHYSICS_SPEEDUP * 3);
+    while (this.physicsMs >= STEP) {
+      this.matter.world.step(STEP);
+      this.physicsMs -= STEP;
+      for (const fruit of this.fruits) {
+        if (!fruit.getData("released")) continue;
+        const body = fruit.body as MatterJS.BodyType;
+        if (this.dying.has(body)) continue;
+        // Clamp speed so nothing can tunnel through a wall in one physics step.
+        const speed = Math.hypot(body.velocity.x, body.velocity.y);
+        if (speed > MAX_FALL_SPEED) {
+          const k = MAX_FALL_SPEED / speed;
+          (fruit as any).setVelocity(body.velocity.x * k, body.velocity.y * k);
+        }
+      }
+    }
+  }
+
   update(_time: number, delta: number): void {
+    // 物理先走（以前是 Phaser 在 update 之前自动走的，顺序不变）。放在 gameOver
+    // 判断前面：结束画面底下水果照样落稳，和以前一样。
+    this.stepPhysics(delta);
     if (this.gameOver || this.quizOpen) return;
 
     this.updateConveyor(delta);
@@ -677,12 +715,7 @@ export class GameScene extends Phaser.Scene {
         fruit.setData("ghostStump", false);
       }
 
-      // Clamp speed so nothing can tunnel through a wall in one physics step.
       const speed = Math.hypot(body.velocity.x, body.velocity.y);
-      if (speed > MAX_FALL_SPEED) {
-        const k = MAX_FALL_SPEED / speed;
-        (fruit as any).setVelocity(body.velocity.x * k, body.velocity.y * k);
-      }
 
       if (
         fruit.y > this.basketMinY() &&
