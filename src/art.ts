@@ -60,10 +60,38 @@ function makeTexture(
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  const ctx = canvas.getContext("2d");
+  // willReadFrequently：让浏览器把画布放在内存里，不放 GPU 上。安卓把应用切到后台
+  // 会回收 GPU 上的画布，切回来就是一张白板——2026-10 孩子手机上井、斜坡、砖、
+  // 按钮底色全没了，而 Phaser 的文字用的正是内存画布，一个字没丢。
+  // 必须在第一次 getContext 时就给：画布类型由第一次决定，Phaser 的 CanvasTexture
+  // 后面也会要 willReadFrequently，但那时已经不生效了。
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
   draw(ctx, width, height);
-  textures.addCanvas(key, canvas);
+  const texture = textures.addCanvas(key, canvas);
+  // 兜底：GPU 进程整个崩掉时内存画布也会被清空（桌面 Chrome 实测）。浏览器恢复
+  // 画布时发 contextrestored，那时画布是空白的，重画一遍再重新上传给 WebGL。
+  // 贴图是全局的、每张只建一次，所以监听也只挂一次。
+  canvas.addEventListener("contextrestored", () => {
+    draw(ctx, width, height);
+    texture?.refresh();
+  });
+}
+
+// 文字也一样：Phaser 的文字画布在 GPU 进程崩掉时同样会被清空，而 Phaser 不会
+// 自己重画（桌面 Chrome 实测，关卡名、剩余数、按钮上的字全没了）。画布恢复时
+// 让它按原来的文字和样式重画一遍。文字画布是 Phaser 池子里复用的，所以销毁时
+// 要把监听摘掉，不然下一个用到这张画布的文字会带着一串旧监听。
+const textHooked = new WeakSet<Phaser.GameObjects.Text>();
+export function repaintTextOnRestore(text: Phaser.GameObjects.Text): void {
+  if (textHooked.has(text)) return;
+  textHooked.add(text);
+  const canvas = text.canvas;
+  const onRestored = () => text.updateText();
+  canvas.addEventListener("contextrestored", onRestored);
+  text.once(Phaser.GameObjects.Events.DESTROY, () =>
+    canvas.removeEventListener("contextrestored", onRestored),
+  );
 }
 
 function drawSkyTexture(ctx: CanvasRenderingContext2D): void {

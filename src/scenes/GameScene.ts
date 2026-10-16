@@ -54,6 +54,7 @@ import {
   BUTTON_TEXTURE,
   FRUIT_TEXTURE_SIZE,
   buildArtTextures,
+  repaintTextOnRestore,
   fruitAssetUrl,
   fruitTextureKey,
 } from "../art";
@@ -176,6 +177,16 @@ export class GameScene extends Phaser.Scene {
     this.overflowMs = 0;
     this.physicsMs = 0;
     this.unlocks = 0; // locks reset every level, like the original
+
+    // 之后建的每个文字对象（HUD、按钮、答题面板……）都挂上「画布恢复时重画」，
+    // 见 art.ts。场景重开时把这个监听摘掉，免得一局一局叠起来。
+    const hookText = (obj: Phaser.GameObjects.GameObject) => {
+      if (obj instanceof Phaser.GameObjects.Text) repaintTextOnRestore(obj);
+    };
+    this.events.on(Phaser.Scenes.Events.ADDED_TO_SCENE, hookText);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () =>
+      this.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, hookText),
+    );
 
     buildArtTextures(this.textures);
     this.drawBackground();
