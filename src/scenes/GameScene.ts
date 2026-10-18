@@ -714,6 +714,7 @@ export class GameScene extends Phaser.Scene {
     // matching (a landing fruit may pop on touch, before it settles), and the
     // SETTLED ones for the overflow check.
     const inZone: Fruit[] = [];
+    let falling = false; // 还有水果在往下掉 / 往下滚（井里井外都算）
     const settled: Fruit[] = [];
     for (const fruit of this.fruits) {
       if (!fruit.getData("released")) continue;
@@ -727,6 +728,7 @@ export class GameScene extends Phaser.Scene {
       }
 
       const speed = Math.hypot(body.velocity.x, body.velocity.y);
+      if (speed >= SETTLED_SPEED) falling = true;
 
       if (
         fruit.y > this.basketMinY() &&
@@ -773,10 +775,13 @@ export class GameScene extends Phaser.Scene {
     // Overflow: the basket holds 3 (+1 per unlocked reserve slot). After
     // matches clear, only unmatchable types remain settled; one more than the
     // capacity can hold = "装不下啦".
+    // 还有水果在路上就先不判：孩子可能已经点了配对的那颗。2026-10 截图——井里第
+    // 4 颗落稳 0.35 秒就判了「装不下啦」，配对的香蕉晚到 0.04 秒，挨着也没消
+    // （判输之后就不再配对了）。等全部停稳，该消的消完，再看装不装得下。
     const stillSettled = settled.filter(
       (f) => !this.dying.has(f.body as MatterJS.BodyType),
     );
-    if (stillSettled.length >= this.wellCapacity()) {
+    if (!falling && stillSettled.length >= this.wellCapacity()) {
       this.overflowMs += delta;
       if (this.overflowMs >= OVERFLOW_HOLD_MS) this.lose();
     } else {
