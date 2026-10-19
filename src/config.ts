@@ -107,9 +107,12 @@ export const SWAY_TRIGGER = 3; // nudge once per this many fruit releases
 export const SWAY_MAX = 70; // max |offset| from centre before reversing
 export const SWAY_SPEED = 140; // px/sec easing toward the pending nudge target
 
-// Lateral drift joins the mix at level 19, once unlocks and stumps have landed.
+// 摆动是「特色关」，不是第 19 关以后关关都摆（2026-10 家长：想让摆动成为一些
+// 关卡的特点）。第 19 关起每 3 关摆一次：19、22、25……开局第三行会提示。
+// 摆动关的水果堆左右各让出 SWAY_MAX（免得摆到边上被屏幕切掉），所以只有这些关
+// 窄一圈，不摆的关照常铺满整个宽度。
 export function swayForLevel(level: number): boolean {
-  return level >= 19;
+  return level >= 19 && (level - 19) % 3 === 0;
 }
 
 // 水果堆的排布：照原版「大而密」—— 铺满整个宽度，一排一排几乎挨着。

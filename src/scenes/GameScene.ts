@@ -836,10 +836,11 @@ export class GameScene extends Phaser.Scene {
       .setDepth(25);
     this.updateRemaining();
 
+    // 摆动是特色关，开局就告诉孩子这一关有什么不一样
     this.add
-      .text(WIDTH / 2, 112, "点一下水果让它掉下去，凑成一对就消除！", {
+      .text(WIDTH / 2, 112, this.sway ? "这一关水果堆会左右摆，看准了再点！" : "点一下水果让它掉下去，凑成一对就消除！", {
         fontSize: "22px",
-        color: "#ffffff",
+        color: this.sway ? "#ffe066" : "#ffffff",
         stroke: "#2d74a8",
         strokeThickness: 5,
       })
