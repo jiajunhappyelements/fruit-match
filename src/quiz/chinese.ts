@@ -9,9 +9,15 @@
 //              并且排除这个字的所有其他读音（多音字的「错误选项」不能其实是对的）。
 //   词语结构 —— AABB / ABB / ABAC / AA 按字形用代码判定，不是人工分类。
 //   古诗、小古文 —— 上下句关系来自原文顺序。
+//   看拼音选字 —— 干扰项的所有已知读音都不是这个音。
+//   看拼音选词语 / 词语读音 —— 词语拼音按词典录入，check:quiz 拿识字表逐字核对；
+//              干扰项是别的词（读音不同）/ 改过一个音节的拼音。
+//   四字词语 —— 干扰项填进去不能是词语表里的词，也不能是「精疲力尽」这类也说得通的写法。
 // ---------------------------------------------------------------------------
 import type { Generator, Question } from "./types";
-import { CIYU, CLASSICAL, FACTS, OTHER_READINGS, POEMS, POET_POOL, SHIZI, lessonName } from "./chinese-data";
+import {
+  ALT_IDIOMS, CIYU, CIYU_PINYIN, CLASSICAL, FACTS, OTHER_READINGS, POEMS, POET_POOL, SHIZI, lessonName,
+} from "./chinese-data";
 
 // --- 小工具 -------------------------------------------------------------------
 const ri = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
@@ -144,6 +150,113 @@ function ciyuStructure(): Question | null {
   );
 }
 
+// --- 看拼音选字（生字反着考）---------------------------------------------------
+/** 去掉声调：yíng → ying（ü 保留，绿 lǜ 和路 lù 不算同音）。 */
+function toneless(py: string): string {
+  return [...py].map((c) => MARKED.get(c)?.[0] ?? c).join("");
+}
+
+function charFromPinyin(): Question | null {
+  const z = pick(SHIZI.filter((s) => !s.poly));
+  // 干扰项只用单音的黑字里「怎么读都读不成这个音」的；蓝字其他读音多，不碰
+  const cands = shuffled(
+    [...new Set(SHIZI.filter((s) => !s.poly && s.char !== z.char && !readingsOf(s.char).has(z.pinyin)).map((s) => s.char))],
+  );
+  // 同音不同调的排前面（萤 yíng / 影 yǐng 这种），孩子得看准声调
+  const near = cands.filter((c) => [...readingsOf(c)].some((r) => toneless(r) === toneless(z.pinyin)));
+  const pool = [...near.slice(0, 2), ...cands.filter((c) => !near.includes(c))].slice(0, 3);
+  return mc(
+    "看拼音选字",
+    z.lesson,
+    `哪个字读「${z.pinyin}」？`,
+    z.char,
+    pool,
+    `读「${z.pinyin}」的是「${z.char}」（${lessonName(z.lesson)}）`,
+  );
+}
+
+// --- 词语拼音：看拼音选词语 / 词语读音 ----------------------------------------
+type PyWord = { lesson: number; word: string; py: string };
+/** 有拼音、且拼音拿得准的词（? 开头的跳过，见 chinese-data.ts）。 */
+const PY_WORDS: PyWord[] = CIYU.flatMap((c) => {
+  const py = CIYU_PINYIN[c.word];
+  return py && !py.startsWith("?") ? [{ ...c, py }] : [];
+});
+const isNeutral = (syl: string) => ![...syl].some((c) => MARKED.has(c));
+
+function wordFromPinyin(): Question | null {
+  const w = pick(PY_WORDS);
+  const mine = new Set(w.py.split(" ").map(toneless));
+  const shared = (o: PyWord) => o.py.split(" ").filter((s) => mine.has(toneless(s))).length;
+  // 同样字数、读音不一样的词；有音节相同的排前面，免得只看第一个音就选出来
+  const others = shuffled(PY_WORDS.filter((o) => o.word.length === w.word.length && o.py !== w.py))
+    .sort((a, b) => shared(b) - shared(a));
+  return mc(
+    "看拼音选词语",
+    w.lesson,
+    `「${w.py}」\n是哪个词语？`,
+    w.word,
+    others.slice(0, 3).map((o) => o.word),
+    `「${w.py}」是「${w.word}」（${lessonName(w.lesson)}）`,
+  );
+}
+
+function wordReading(): Question | null {
+  // 有轻声的、带「一」「不」（变调标法不统一）的不出读音题
+  const usable = PY_WORDS.filter((w) => !w.py.split(" ").some(isNeutral) && !/[一不]/u.test(w.word));
+  const w = pick(usable);
+  const syls = w.py.split(" ");
+  const swap = (i: number, v: string) => syls.map((s, k) => (k === i ? v : s)).join(" ");
+  const sound = syls.flatMap((s, i) => soundVariants(s).map((v) => swap(i, v)));
+  const tone = syls.flatMap((s, i) => toneVariants(s).map((v) => swap(i, v)));
+  // 和生字读音一样：一个「声母/鼻音」错 + 两个声调错
+  const picked = shuffled(sound).slice(0, 1);
+  for (const t of shuffled(tone)) if (picked.length < 3 && !picked.includes(t)) picked.push(t);
+  return mc(
+    "词语读音",
+    w.lesson,
+    `「${w.word}」怎么读？`,
+    w.py,
+    picked,
+    `「${w.word}」读 ${w.py}（${lessonName(w.lesson)}）`,
+  );
+}
+
+// --- 四字词语补全 --------------------------------------------------------------
+const FOUR = CIYU.filter((c) => [...c.word].length === 4 && !PATTERNS[0].test([...c.word])); // AABB 挖一个字太容易
+/** 字 → 去掉声调的读音们（识字表 + 词语拼音），挑同音字干扰项用。 */
+const CHAR_SOUNDS = new Map<string, Set<string>>();
+const addSound = (ch: string, py: string) => {
+  if (!CHAR_SOUNDS.has(ch)) CHAR_SOUNDS.set(ch, new Set());
+  CHAR_SOUNDS.get(ch)!.add(toneless(py));
+};
+for (const z of SHIZI) if (!z.poly) addSound(z.char, z.pinyin);
+for (const w of PY_WORDS) [...w.word].forEach((ch, i) => { const s = w.py.split(" ")[i]; if (!isNeutral(s)) addSound(ch, s); });
+const KNOWN_WORDS = new Set([...CIYU.map((c) => c.word), ...ALT_IDIOMS]);
+
+function idiomBlank(): Question | null {
+  const w = pick(FOUR);
+  const chars = [...w.word];
+  // ABAC（人山人海）挖重复的那个字等于送分
+  const abac = PATTERNS[2].test(chars);
+  const i = pick([0, 1, 2, 3].filter((k) => !(abac && (k === 0 || k === 2))));
+  const answer = chars[i];
+  const sound = toneless(CIYU_PINYIN[w.word].split(" ")[i]);
+  const fill = (c: string) => chars.map((x, k) => (k === i ? c : x)).join("");
+  const ok = (c: string) => c !== answer && !chars.includes(c) && !KNOWN_WORDS.has(fill(c));
+  const all = shuffled([...CHAR_SOUNDS.keys()].filter(ok));
+  const homophones = all.filter((c) => CHAR_SOUNDS.get(c)!.has(sound));
+  const pool = [...homophones, ...all.filter((c) => !homophones.includes(c))].slice(0, 3);
+  return mc(
+    "四字词语",
+    w.lesson,
+    `「${fill("□")}」\n□里填哪个字？`,
+    answer,
+    pool,
+    `「${w.word}」（${lessonName(w.lesson)}）`,
+  );
+}
+
 // --- 古诗 ---------------------------------------------------------------------
 function poemNextLine(): Question | null {
   const poem = pick(POEMS);
@@ -196,8 +309,14 @@ function lessonFact(): Question | null {
 }
 
 // --- 出题入口 -----------------------------------------------------------------
+// 题多的题型多出（各 ×2，每类一两百道），题少的各 ×1。再配上 index.ts 里
+// 「最近 100 道出过的不再出」，十几道题的小题型不会再转得飞快。
 const ALL: (() => Question | null)[] = [
-  shiziReading, shiziReading, shiziReading, // 生字是这册的大头（250 个），权重 ×3
+  shiziReading, shiziReading, // 生字读音 ~225 道
+  charFromPinyin, charFromPinyin, // 看拼音选字 ~235 道
+  wordFromPinyin, wordFromPinyin, // 看拼音选词语 ~200 道
+  wordReading, wordReading, // 词语读音 ~150 道
+  idiomBlank, // 四字词语 ~60 道
   ciyuStructure, poemNextLine, poemAuthor, classicalNext, lessonFact,
 ];
 

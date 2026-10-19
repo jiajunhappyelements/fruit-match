@@ -28,7 +28,7 @@ globalThis.localStorage = {
 const {
   nextQuestion, availableSubjects, HISTORY_KEY,
   CHINESE_BANK, pinyinDistractors, hasSingleReading, PATTERNS,
-  SHIZI, POEMS, CLASSICAL, OTHER_READINGS,
+  SHIZI, POEMS, CLASSICAL, OTHER_READINGS, CIYU, CIYU_PINYIN, ALT_IDIOMS,
   ENGLISH_BANK, WORDS, CONFUSABLE, MATH_BANK, SHAPE_FACTS,
 } = await import(pathToFileURL(out).href);
 
@@ -233,6 +233,38 @@ function checkChinese(q) {
     }
     case "课文知识":
       return null; // 题面和答案原样取自 FACTS，只做结构检查
+    case "看拼音选字": {
+      if (!(m = q.prompt.match(/^哪个字读「(.+)」？$/u))) return "题面格式怪";
+      const py = m[1];
+      if (!SHIZI.some((z) => z.char === a && z.lesson === q.lesson && z.pinyin === py)) return `识字表第 ${q.lesson} 课没有「${a}」读 ${py}`;
+      const bad = wrong.find((o) => readingsOf(o).has(py));
+      return bad ? `干扰项「${bad}」也读 ${py}` : null;
+    }
+    case "看拼音选词语": {
+      if (!(m = q.prompt.match(/^「(.+)」\n是哪个词语？$/u))) return "题面格式怪";
+      if (CIYU_PINYIN[a] !== m[1]) return `「${a}」的拼音是 ${CIYU_PINYIN[a]}，题面是 ${m[1]}`;
+      if (!CIYU.some((c) => c.word === a && c.lesson === q.lesson)) return `词语表第 ${q.lesson} 课没有「${a}」`;
+      const bad = wrong.find((o) => !CIYU_PINYIN[o] || CIYU_PINYIN[o] === m[1]);
+      return bad ? `干扰项「${bad}」不在词语表里或者同音` : null;
+    }
+    case "词语读音": {
+      if (!(m = q.prompt.match(/^「(.+)」怎么读？$/u))) return "题面格式怪";
+      const py = CIYU_PINYIN[m[1]];
+      if (!py || py.startsWith("?")) return `「${m[1]}」没有拿得准的拼音`;
+      if (a !== py) return `读音错: 应为 ${py}，标了 ${a}`;
+      if (py.split(" ").some((s) => !/[āáǎàōóǒòēéěèīíǐìūúǔùǖǘǚǜ]/u.test(s))) return `「${m[1]}」有轻声，不该出读音题`;
+      if (/[一不]/u.test(m[1])) return `「${m[1]}」带一/不，不该出读音题`;
+      const bad = wrong.find((o) => o.split(" ").length !== [...m[1]].length);
+      return bad ? `干扰项音节数不对: ${bad}` : null;
+    }
+    case "四字词语": {
+      if (!(m = q.prompt.match(/^「(.{4})」\n□里填哪个字？$/u))) return "题面格式怪";
+      const fill = (c) => m[1].replace("□", c);
+      if (!CIYU.some((c) => c.word === fill(a) && c.lesson === q.lesson)) return `「${fill(a)}」不是第 ${q.lesson} 课的词`;
+      const known = new Set([...CIYU.map((c) => c.word), ...ALT_IDIOMS]);
+      const bad = wrong.find((o) => known.has(fill(o)));
+      return bad ? `干扰项填进去也成立: ${fill(bad)}` : null;
+    }
     default:
       return "UNCHECKED";
   }
@@ -278,6 +310,24 @@ for (let i = 0; i < 12000; i++) {
   if (e === "UNCHECKED") fails.push(`数学 ${q.topic}: 校验器没覆盖这个题型 :: ${q.prompt}`);
   else if (e) fails.push(`数学 ${q.topic}: ${e} :: ${q.prompt} → ${q.options.join(" / ")}`);
 }
+
+// --- 词语拼音逐字核对：生字在词里的读音，必须是识字表/登记过的某个读音（或它的轻声）
+const TONE_MARK = /[āáǎàōóǒòēéěèīíǐìūúǔùǖǘǚǜ]/u;
+const plain = (py) => py.normalize("NFD").replace(/[\u0300\u0301\u0304\u030c]/g, "").normalize("NFC");
+for (const c of CIYU) {
+  const raw = CIYU_PINYIN[c.word];
+  if (!raw) { fails.push(`词语拼音: 「${c.word}」没录拼音`); continue; }
+  const syls = raw.replace(/^\?/, "").split(" ");
+  if (syls.length !== [...c.word].length) { fails.push(`词语拼音: 「${c.word}」音节数不对 ${raw}`); continue; }
+  [...c.word].forEach((ch, i) => {
+    const rs = readingsOf(ch);
+    if (!rs.size) return; // 不是生字，没有课本拼音可对
+    const s = syls[i];
+    const okReading = TONE_MARK.test(s) ? rs.has(s) : [...rs].some((r) => plain(r) === s);
+    if (!okReading) fails.push(`词语拼音: 「${c.word}」里的「${ch}」标了 ${s}，识字表是 ${[...rs].join("/")}`);
+  });
+}
+for (const w of Object.keys(CIYU_PINYIN)) if (!CIYU.some((c) => c.word === w)) fails.push(`词语拼音: 「${w}」不在词语表里`);
 
 const N = 500;
 const subjects = availableSubjects();

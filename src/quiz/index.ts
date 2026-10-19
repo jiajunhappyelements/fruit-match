@@ -12,7 +12,7 @@ export type { Question, Subject } from "./types";
 export { recordAnswer, loadHistory, topicStats, HISTORY_KEY } from "./history";
 // 自检脚本用
 export { CHINESE_BANK, pinyinDistractors, hasSingleReading, PATTERNS } from "./chinese";
-export { SHIZI, POEMS, CLASSICAL, OTHER_READINGS } from "./chinese-data";
+export { SHIZI, POEMS, CLASSICAL, OTHER_READINGS, CIYU, CIYU_PINYIN, ALT_IDIOMS } from "./chinese-data";
 // 下面这些只给题库自检（scripts/check-quiz.mjs）用
 export { ENGLISH_BANK } from "./english";
 export { WORDS, CONFUSABLE } from "./english-data";
