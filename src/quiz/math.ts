@@ -435,11 +435,17 @@ const shapeFact: Generator = () => {
 // ===========================================================================
 // 出题入口：每个单元大致一样多（第四单元题型最多，多一份）
 // ===========================================================================
+// 现算数字的题（每个出题器几百上千道不重样）各 ×2；概念题只有几条到十几条
+// （关系式 2 道、角的关系 6 道、钟面 11 道、平行四边形和梯形 12 道）各 ×1。
+// 以前 15 个平分，概念题占了数学的三分之一，同样几句话转得飞快（2026-10 家长
+// 反馈语文 ABB 题老出，查数学是同一个毛病）。再配上 index.ts 里「最近 100 道
+// 出过的不再出」。
+const x2 = (...gens: Generator[]) => gens.flatMap((g) => [g, g]);
 export const MATH_BANK: Generator[] = [
-  bigNumberWan, bigNumberYi, compareBig, // 一 万以上数的认识
-  angles, clockAngle, angleRelations, // 二 角的度量
-  mulThreeByTwo, mentalMul, mulWithZero, // 三 多位数乘两位数
-  priceModel, speedModel, additionModel, relationFact, // 四 加法模型和乘法模型
-  shapeFact, shapeFact, // 五 平行四边形和梯形（概念题只有十几条，×2 免得太重复）
+  ...x2(bigNumberWan, bigNumberYi, compareBig), // 一 万以上数的认识
+  ...x2(angles), clockAngle, angleRelations, // 二 角的度量
+  ...x2(mulThreeByTwo, mentalMul, mulWithZero), // 三 多位数乘两位数
+  ...x2(priceModel, speedModel, additionModel), relationFact, // 四 加法模型和乘法模型
+  shapeFact, // 五 平行四边形和梯形（这个单元只有概念题）
   // 六 条形统计图：要看图，四选一的框里放不下，没出
 ];
