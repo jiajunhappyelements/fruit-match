@@ -37,6 +37,8 @@ import {
   SWAY_MAX,
   SWAY_SPEED,
   swayForLevel,
+  RAINBOW,
+  rainbowsForLevel,
   QUIZ_GATE_ENABLED,
   QUIZ_ROUNDS,
   QUIZ_PASS,
@@ -52,6 +54,7 @@ import {
   BRICK_TEXTURE,
   STUMP_TEXTURE,
   BUTTON_TEXTURE,
+  RAINBOW_TEXTURE,
   FRUIT_TEXTURE_SIZE,
   buildArtTextures,
   repaintTextOnRestore,
@@ -66,6 +69,9 @@ interface LockBrick {
 }
 
 type Fruit = Phaser.GameObjects.Image;
+
+/** 彩虹果（万能果），规则见 config.ts 里 RAINBOW。 */
+const isRainbow = (f: Phaser.GameObjects.GameObject) => f.getData("ftype") === RAINBOW;
 
 export class GameScene extends Phaser.Scene {
   private fruits: Fruit[] = [];
@@ -437,9 +443,16 @@ export class GameScene extends Phaser.Scene {
     const pool = this.buildTypePool(fruitCount, typeCount);
     // 整堆一次摆完：一屏在可见区域内，其余全部堆在屏幕上方等着被下移带进来。
     // 摆完之后这一关就再也不会生成任何水果了。
-    const points = this.scatterPile(pool.length);
-    points.forEach((p, i) => this.spawnFruit(p.x, p.y, pool[i]));
-    this.remaining = fruitCount;
+    const rainbows = rainbowsForLevel(this.level);
+    const points = this.scatterPile(pool.length + rainbows);
+    // 彩虹果藏在从下往上第 3~6 排：开局就看得见，但得先挖开下面几层才够得着
+    const rowH = Math.round(PILE_SPACING * 0.866);
+    const rowOf = (y: number) => Math.round((this.boardBottom() - y) / rowH);
+    const slots = points.map((_, i) => i).filter((i) => rowOf(points[i].y) >= 2 && rowOf(points[i].y) <= 5);
+    const rainbowAt = new Set(Phaser.Utils.Array.Shuffle(slots).slice(0, rainbows));
+    let k = 0;
+    points.forEach((p, i) => this.spawnFruit(p.x, p.y, rainbowAt.has(i) ? RAINBOW : pool[k++]));
+    this.remaining = fruitCount; // 只数普通水果，彩虹果不算
   }
 
   // 整堆水果的排布（照原版「大而密」）：从最下面那排（boardBottom）往上，一排一排
@@ -537,10 +550,10 @@ export class GameScene extends Phaser.Scene {
 
   private spawnFruit(x: number, y: number, typeKey: string): void {
     const def = FRUIT_TYPES.find((f) => f.key === typeKey);
-    if (!def) return;
+    if (!def && typeKey !== RAINBOW) return;
     const baseScale = (FRUIT_RADIUS * 2.72) / FRUIT_TEXTURE_SIZE;
     const fruit = this.add
-      .image(x, y, fruitTextureKey(def.key))
+      .image(x, y, def ? fruitTextureKey(def.key) : RAINBOW_TEXTURE)
       .setOrigin(0.5)
       .setScale(baseScale)
       .setDepth(1);
@@ -627,8 +640,10 @@ export class GameScene extends Phaser.Scene {
   private eliminate(fruit: Fruit): void {
     const body = fruit.body as MatterJS.BodyType;
     this.dying.add(body);
-    this.remaining--;
-    this.updateRemaining();
+    if (!isRainbow(fruit)) {
+      this.remaining--;
+      this.updateRemaining();
+    }
 
     // Star burst at the fruit's spot (like the original game's pop effect).
     this.sparkEmitter.explode(12, fruit.x, fruit.y);
@@ -702,6 +717,21 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 彩虹果碰到 fruit 时，再带走的那颗同类：先找井里的（井能一下空出好几格），
+   * 再找水果堆里最低的（和「消除」按钮一样，最可能在屏幕里），最后是还在半路的。
+   */
+  private rainbowTwin(fruit: Fruit, inZone: Fruit[], used: Set<Fruit>): Fruit | undefined {
+    const type = fruit.getData("ftype");
+    const same = (f: Fruit) =>
+      f !== fruit && !used.has(f) && !this.dying.has(f.body as MatterJS.BodyType) && f.getData("ftype") === type;
+    return (
+      inZone.find(same) ??
+      this.pinnedFruits().filter(same).sort((a, b) => b.y - a.y)[0] ??
+      this.fruits.find((f) => f.getData("released") && same(f))
+    );
+  }
+
   update(_time: number, delta: number): void {
     // 物理先走（以前是 Phaser 在 update 之前自动走的，顺序不变）。放在 gameOver
     // 判断前面：结束画面底下水果照样落稳，和以前一样。
@@ -755,12 +785,21 @@ export class GameScene extends Phaser.Scene {
       for (let j = i + 1; j < inZone.length; j++) {
         const b = inZone[j];
         if (used.has(b)) continue;
-        if (a.getData("ftype") !== b.getData("ftype")) continue;
+        const rainbowHit = isRainbow(a) !== isRainbow(b); // 彩虹果碰普通水果
+        if (!rainbowHit && a.getData("ftype") !== b.getData("ftype")) continue;
         if (Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y) > contactDist) {
           continue;
         }
         used.add(a);
         used.add(b);
+        if (rainbowHit) {
+          // 连同碰到的那颗的一个同类一起消，每种水果才永远是偶数（见 config.ts）
+          const twin = this.rainbowTwin(isRainbow(a) ? b : a, inZone, used);
+          if (twin) {
+            used.add(twin);
+            this.eliminate(twin);
+          }
+        }
         this.eliminate(a);
         this.eliminate(b);
         sfx.match(combo++);
@@ -836,11 +875,16 @@ export class GameScene extends Phaser.Scene {
       .setDepth(25);
     this.updateRemaining();
 
-    // 摆动是特色关，开局就告诉孩子这一关有什么不一样
+    // 开局告诉孩子这一关有什么不一样：摆动关 > 有彩虹果 > 普通玩法
+    const [hint, hintColor] = this.sway
+      ? ["这一关水果堆会左右摆，看准了再点！", "#ffe066"]
+      : rainbowsForLevel(this.level)
+        ? ["彩虹果落进井里，碰到谁就带着它的同类一起消！", "#ffd6f5"]
+        : ["点一下水果让它掉下去，凑成一对就消除！", "#ffffff"];
     this.add
-      .text(WIDTH / 2, 112, this.sway ? "这一关水果堆会左右摆，看准了再点！" : "点一下水果让它掉下去，凑成一对就消除！", {
+      .text(WIDTH / 2, 112, hint, {
         fontSize: "22px",
-        color: this.sway ? "#ffe066" : "#ffffff",
+        color: hintColor,
         stroke: "#2d74a8",
         strokeThickness: 5,
       })
@@ -955,7 +999,7 @@ export class GameScene extends Phaser.Scene {
     const pinned = this.pinnedFruits();
     const basket = this.basketFruits();
     const top = basket[0];
-    if (top) {
+    if (top && !isRainbow(top)) {
       const type = top.getData("ftype");
       const twin =
         pinned.filter((f) => f.getData("ftype") === type).sort((a, b) => b.y - a.y)[0] ??
@@ -966,6 +1010,7 @@ export class GameScene extends Phaser.Scene {
     const VISIBLE_Y = 140; // HUD 底下才算看得见
     const byType = new Map<string, Fruit[]>();
     for (const f of pinned) {
+      if (isRainbow(f)) continue; // 两颗彩虹果白白消掉没意义
       const list = byType.get(f.getData("ftype")) ?? [];
       list.push(f);
       byType.set(f.getData("ftype"), list);
@@ -997,7 +1042,7 @@ export class GameScene extends Phaser.Scene {
 
   /** 打乱有没有意义：上面钉着的水果至少有两种，换了内容才会不一样。 */
   private canShuffle(): boolean {
-    return new Set(this.pinnedFruits().map((f) => f.getData("ftype"))).size >= 2;
+    return new Set(this.pinnedFruits().filter((f) => !isRainbow(f)).map((f) => f.getData("ftype"))).size >= 2;
   }
 
   private tryShuffle(): void {
@@ -1021,7 +1066,7 @@ export class GameScene extends Phaser.Scene {
    */
   private shuffle(): void {
     if (this.gameOver) return;
-    const pinned = this.pinnedFruits();
+    const pinned = this.pinnedFruits().filter((f) => !isRainbow(f)); // 彩虹果留在原地
     const before = pinned.map((f) => f.getData("ftype") as string);
     if (new Set(before).size < 2) return;
 
@@ -1056,6 +1101,10 @@ export class GameScene extends Phaser.Scene {
 
   private win(): void {
     sfx.win();
+    // 普通水果都消完了，没用上的彩虹果也跟着冒星星消失
+    for (const f of [...this.fruits]) {
+      if (isRainbow(f) && !this.dying.has(f.body as MatterJS.BodyType)) this.eliminate(f);
+    }
     // Save progress FIRST so the next level survives a page close/reload.
     const next = this.level + 1;
     if (!this.debugJump) localStorage.setItem(LEVEL_STORAGE_KEY, String(next));

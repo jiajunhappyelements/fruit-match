@@ -20,6 +20,7 @@ export const BASKET_TEXTURE = "painted-basket";
 export const BRICK_TEXTURE = "lock-brick";
 export const STUMP_TEXTURE = "side-stump";
 export const BUTTON_TEXTURE = "button-bubble";
+export const RAINBOW_TEXTURE = "rainbow-fruit";
 
 // The terrain canvas is taller than the screen: when raised by up to
 // UNLOCK_SLOTS slots it must still paint all the way to the screen bottom.
@@ -47,6 +48,8 @@ export function buildArtTextures(textures: Phaser.Textures.TextureManager): void
   makeTexture(textures, BRICK_TEXTURE, 132, SLOT_HEIGHT, drawBrickTexture);
   makeTexture(textures, STUMP_TEXTURE, 96, 96, drawStumpTexture);
   makeTexture(textures, BUTTON_TEXTURE, 196, 92, drawButtonTexture);
+  // 和水果图片一样 256×256，画面上就和水果一样大
+  makeTexture(textures, RAINBOW_TEXTURE, FRUIT_TEXTURE_SIZE, FRUIT_TEXTURE_SIZE, drawRainbowTexture);
 }
 
 function makeTexture(
@@ -416,6 +419,50 @@ function drawBrickTexture(ctx: CanvasRenderingContext2D, width: number, height: 
   ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
   roundRect(ctx, 8, 6, width - 16, 11, 7);
   ctx.fill();
+}
+
+// 彩虹果：六瓣彩虹球 + 立体高光 + 白边 + 中间一颗白星。
+// 不用 createConicGradient：老一点的 iOS 微信内置浏览器不支持，一瓣一瓣画最稳。
+function drawRainbowTexture(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const cx = width / 2;
+  const cy = height / 2;
+  const r = width * 0.36; // 水果图片里果子大约占这么大
+  const colors = ["#ff4d4d", "#ff9f1c", "#ffe14d", "#4cd964", "#38b6ff", "#8e5cff"];
+  colors.forEach((c, i) => {
+    const a0 = -Math.PI / 2 + (i * Math.PI) / 3;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, a0, a0 + Math.PI / 3);
+    ctx.closePath();
+    ctx.fillStyle = c;
+    ctx.fill();
+  });
+  const shade = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.1, cx, cy, r);
+  shade.addColorStop(0, "rgba(255,255,255,0.6)");
+  shade.addColorStop(0.45, "rgba(255,255,255,0)");
+  shade.addColorStop(1, "rgba(0,0,0,0.28)");
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = shade;
+  ctx.fill();
+  ctx.lineWidth = width * 0.025;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  // 白色五角星
+  const outer = r * 0.42;
+  const inner = outer * 0.45;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 ? inner : outer;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "rgba(0,0,0,0.25)";
+  ctx.shadowBlur = width * 0.02;
+  ctx.fill();
+  ctx.shadowBlur = 0;
 }
 
 function drawButtonTexture(ctx: CanvasRenderingContext2D, width: number, height: number): void {
