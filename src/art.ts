@@ -21,6 +21,8 @@ export const BRICK_TEXTURE = "lock-brick";
 export const STUMP_TEXTURE = "side-stump";
 export const BUTTON_TEXTURE = "button-bubble";
 export const RAINBOW_TEXTURE = "rainbow-fruit";
+export const MAP_FLAG_TEXTURE = "map-flag";
+export const MAP_DONE_TEXTURE = "map-done";
 
 // The terrain canvas is taller than the screen: when raised by up to
 // UNLOCK_SLOTS slots it must still paint all the way to the screen bottom.
@@ -50,6 +52,9 @@ export function buildArtTextures(textures: Phaser.Textures.TextureManager): void
   makeTexture(textures, BUTTON_TEXTURE, 196, 92, drawButtonTexture);
   // 和水果图片一样 256×256，画面上就和水果一样大
   makeTexture(textures, RAINBOW_TEXTURE, FRUIT_TEXTURE_SIZE, FRUIT_TEXTURE_SIZE, drawRainbowTexture);
+  // 旅行地图上会动的两个标记：小旗（现在在这）、刚打上的 ✓
+  makeTexture(textures, MAP_FLAG_TEXTURE, 96, 96, (ctx, w) => drawMapIcon(ctx, w / 2, w / 2, w * 0.38, "now"));
+  makeTexture(textures, MAP_DONE_TEXTURE, 96, 96, (ctx, w) => drawMapIcon(ctx, w / 2, w / 2, w * 0.38, "done"));
 }
 
 function makeTexture(
@@ -419,6 +424,50 @@ function drawBrickTexture(ctx: CanvasRenderingContext2D, width: number, height: 
   ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
   roundRect(ctx, 8, 6, width - 16, 11, 7);
   ctx.fill();
+}
+
+// 旅行地图的城市标记：走过 ✓（绿）、现在在这（红底白旗）、还没到（灰底白锁）。
+// 地图画布上直接画，会动的那两个也用它画成贴图，样子保持一致。
+export type MapIconKind = "done" | "now" | "locked";
+export function drawMapIcon(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, kind: MapIconKind): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  ctx.arc(0, 0, s, 0, Math.PI * 2);
+  ctx.fillStyle = kind === "done" ? "#3aa655" : kind === "now" ? "#e8453c" : "#9a9a9a";
+  ctx.fill();
+  ctx.lineWidth = s * 0.22;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  ctx.fillStyle = "#ffffff";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  if (kind === "done") {
+    ctx.lineWidth = s * 0.28;
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.45, 0);
+    ctx.lineTo(-s * 0.1, s * 0.38);
+    ctx.lineTo(s * 0.5, -s * 0.35);
+    ctx.stroke();
+  } else if (kind === "locked") {
+    ctx.fillRect(-s * 0.42, -s * 0.05, s * 0.84, s * 0.6);
+    ctx.lineWidth = s * 0.18;
+    ctx.beginPath();
+    ctx.arc(0, -s * 0.1, s * 0.28, Math.PI, 0);
+    ctx.stroke();
+  } else {
+    ctx.lineWidth = s * 0.16;
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.3, s * 0.55);
+    ctx.lineTo(-s * 0.3, -s * 0.55);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.3, -s * 0.55);
+    ctx.lineTo(s * 0.5, -s * 0.3);
+    ctx.lineTo(-s * 0.3, -s * 0.05);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 // 彩虹果：六瓣彩虹球 + 立体高光 + 白边 + 中间一颗白星。

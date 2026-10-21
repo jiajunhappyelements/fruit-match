@@ -46,6 +46,7 @@ import {
 import { sfx, unlockAudio } from "../audio";
 import { availableSubjects } from "../quiz";
 import { showQuizPanel } from "../quiz/panel";
+import { openTravelMap } from "../map/travel-map";
 import { placeOf, isJourneyComplete, TOTAL_LEVELS, REGIONS, type Place } from "../levels";
 import {
   SKY_TEXTURE,
@@ -92,6 +93,7 @@ export class GameScene extends Phaser.Scene {
   private swayDir = 1; // +1 drifting right, -1 drifting left
   private releaseCount = 0; // fruit releases since last sway nudge
   private quizOpen = false; // 答题面板开着：物理和 update 都停住
+  private mapOpen = false; // 旅行地图开着：同上
 
   private remainingText!: Phaser.GameObjects.Text;
   private sparkEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -153,7 +155,7 @@ export class GameScene extends Phaser.Scene {
    * 填满，判负发生在面板底下。
    */
   private withQuiz(what: string, action: () => void): void {
-    if (this.gameOver || this.quizOpen) return;
+    if (this.gameOver || this.quizOpen || this.mapOpen) return;
     if (!this.quizGateActive()) {
       action();
       return;
@@ -180,6 +182,7 @@ export class GameScene extends Phaser.Scene {
     this.dying.clear();
     this.gameOver = false;
     this.quizOpen = false;
+    this.mapOpen = false;
     this.overflowMs = 0;
     this.physicsMs = 0;
     this.unlocks = 0; // locks reset every level, like the original
@@ -736,7 +739,7 @@ export class GameScene extends Phaser.Scene {
     // 物理先走（以前是 Phaser 在 update 之前自动走的，顺序不变）。放在 gameOver
     // 判断前面：结束画面底下水果照样落稳，和以前一样。
     this.stepPhysics(delta);
-    if (this.gameOver || this.quizOpen) return;
+    if (this.gameOver || this.quizOpen || this.mapOpen) return;
 
     this.updateConveyor(delta);
 
@@ -875,6 +878,18 @@ export class GameScene extends Phaser.Scene {
       .setDepth(25);
     this.updateRemaining();
 
+    // 左上角：旅行地图（只看不选关）
+    const mapBg = this.add.graphics();
+    mapBg.fillStyle(0xfdf6e3, 0.95).fillCircle(0, 0, 32);
+    mapBg.lineStyle(4, 0xc98f4a, 1).strokeCircle(0, 0, 32);
+    const mapIcon = this.add.text(0, 2, "🗺️", { fontSize: "34px", padding: { top: 6, bottom: 6 } }).setOrigin(0.5);
+    this.add
+      .container(50, 50, [mapBg, mapIcon])
+      .setDepth(26)
+      .setSize(68, 68)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerdown", () => this.openMap());
+
     // 开局告诉孩子这一关有什么不一样：摆动关 > 有彩虹果 > 普通玩法
     const [hint, hintColor] = this.sway
       ? ["这一关水果堆会左右摆，看准了再点！", "#ffe066"]
@@ -935,6 +950,21 @@ export class GameScene extends Phaser.Scene {
       duration: 900,
       ease: "Sine.easeIn",
       onComplete: () => t.destroy(),
+    });
+  }
+
+  /** 左上角的地图：打开期间和答题一样，物理和 update 都停住。 */
+  private openMap(): void {
+    if (this.gameOver || this.quizOpen || this.mapOpen) return;
+    this.mapOpen = true;
+    this.matter.world.pause();
+    openTravelMap(this, {
+      mode: "browse",
+      level: this.level,
+      onClose: () => {
+        this.mapOpen = false;
+        this.matter.world.resume();
+      },
     });
   }
 
@@ -1132,13 +1162,21 @@ export class GameScene extends Phaser.Scene {
         ? `下一站 ${there.region}-${there.city}`
         : `即将到达 ${there.region}！（第 ${there.regionIndex}/${REGIONS.length} 省）`;
 
-    this.endGame(
-      "恭喜过关！",
-      0x3aa655,
-      "下一关",
-      () => this.scene.restart({ level: next, debug: this.debugJump }),
-      subtitle,
-    );
+    // 过一会儿自动弹出旅行地图，小旗走到下一站，地图上点「出发」才进下一关。
+    // 不想等的话点「下一关」直接弹。
+    let mapShown = false;
+    const showMap = () => {
+      if (mapShown) return;
+      mapShown = true;
+      this.matter.world.pause();
+      openTravelMap(this, {
+        mode: "travel",
+        from: this.level,
+        onGo: () => this.scene.restart({ level: next, debug: this.debugJump }),
+      });
+    };
+    this.endGame("恭喜过关！", 0x3aa655, "下一关", showMap, subtitle);
+    this.time.delayedCall(1100, showMap);
   }
 
   private lose(): void {
