@@ -23,6 +23,8 @@ export const BUTTON_TEXTURE = "button-bubble";
 export const RAINBOW_TEXTURE = "rainbow-fruit";
 export const MAP_FLAG_TEXTURE = "map-flag";
 export const MAP_DONE_TEXTURE = "map-done";
+export const MAP_LOCK_TEXTURE = "map-lock";
+export const MAP_PLANE_TEXTURE = "map-plane";
 
 // The terrain canvas is taller than the screen: when raised by up to
 // UNLOCK_SLOTS slots it must still paint all the way to the screen bottom.
@@ -55,6 +57,8 @@ export function buildArtTextures(textures: Phaser.Textures.TextureManager): void
   // 旅行地图上会动的两个标记：小旗（现在在这）、刚打上的 ✓
   makeTexture(textures, MAP_FLAG_TEXTURE, 96, 96, (ctx, w) => drawMapIcon(ctx, w / 2, w / 2, w * 0.38, "now"));
   makeTexture(textures, MAP_DONE_TEXTURE, 96, 96, (ctx, w) => drawMapIcon(ctx, w / 2, w / 2, w * 0.38, "done"));
+  makeTexture(textures, MAP_LOCK_TEXTURE, 96, 96, (ctx, w) => drawMapIcon(ctx, w / 2, w / 2, w * 0.38, "locked"));
+  makeTexture(textures, MAP_PLANE_TEXTURE, 128, 128, drawPlaneTexture);
 }
 
 function makeTexture(
@@ -467,6 +471,34 @@ export function drawMapIcon(ctx: CanvasRenderingContext2D, x: number, y: number,
     ctx.lineTo(-s * 0.3, -s * 0.05);
     ctx.fill();
   }
+  ctx.restore();
+}
+
+// 跨省坐的小飞机：俯视的样子，机头朝右（0°），代码里按航线方向转。
+function drawPlaneTexture(ctx: CanvasRenderingContext2D, width: number): void {
+  const s = width * 0.42;
+  // 上半边的轮廓（机头 → 机翼 → 尾翼 → 机尾），下半边对称
+  const top: [number, number][] = [
+    [1.0, 0], [0.82, -0.1], [0.2, -0.13], [-0.2, -0.85], [-0.42, -0.85], [-0.22, -0.13],
+    [-0.68, -0.11], [-0.88, -0.42], [-1.02, -0.42], [-0.9, 0],
+  ];
+  const pts = [...top, ...top.slice(1, -1).reverse().map(([x, y]) => [x, -y] as [number, number])];
+  ctx.save();
+  ctx.translate(width / 2, width / 2);
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * s, y * s) : ctx.moveTo(x * s, y * s)));
+  ctx.closePath();
+  ctx.lineJoin = "round";
+  ctx.lineWidth = width * 0.05;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+  ctx.fillStyle = "#e8453c";
+  ctx.fill();
+  // 驾驶舱窗户
+  ctx.beginPath();
+  ctx.ellipse(s * 0.62, 0, s * 0.12, s * 0.06, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#cfefff";
+  ctx.fill();
   ctx.restore();
 }
 
