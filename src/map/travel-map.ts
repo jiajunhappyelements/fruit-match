@@ -218,6 +218,9 @@ function paint(g: CanvasRenderingContext2D, f: Frame): void {
 
   // 省
   for (const p of DRAW_ORDER) {
+    const [sx0, sy0] = toScreen(v, p.box[0], p.box[1]);
+    const [sx1, sy1] = toScreen(v, p.box[2], p.box[3]);
+    if (sx1 < 0 || sx0 > WIDTH || sy1 < 0 || sy0 > HEIGHT) continue; // 整个省都在屏幕外
     tracePolys(g, v, p.polys);
     g.fillStyle = f.focus ? (p.name === f.focus ? "#fff7d6" : "#e8e8e8") : FILL[regionStatus(p.name, f.progress)];
     g.fill("evenodd");
@@ -327,11 +330,13 @@ interface Overlay {
 
 function makeOverlay(scene: Phaser.Scene): Overlay {
   const layer = scene.add.container(0, 0).setDepth(DEPTH);
+  // 最底下垫一块海：拖动地图时移开的地方露出来的是海，不是底下的游戏画面
+  const sea = scene.add.rectangle(0, 0, WIDTH, HEIGHT, Phaser.Display.Color.HexStringToColor(SEA).color).setOrigin(0);
   const maps = scene.add.container(0, 0);
   const hit = scene.add.rectangle(0, 0, WIDTH, HEIGHT, 0x000000, 0).setOrigin(0).setInteractive();
   const anim = scene.add.container(0, 0);
   const ui = scene.add.container(0, 0);
-  layer.add([maps, hit, anim, ui]);
+  layer.add([sea, maps, hit, anim, ui]);
 
   const top = scene.add.graphics();
   top.fillStyle(0xfdf6e3, 0.94).fillRoundedRect(24, 30, WIDTH - 48, 116, 24);
@@ -454,6 +459,7 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
   const progress = opts.level;
   const here = CITIES[Math.min(progress, CITIES.length) - 1];
   let view = NATIONAL;
+  let focus: string | null = null; // 点开的省；null = 全国图
   let back: Phaser.GameObjects.Container | null = null;
   SHEET_1.draw(scene, { progress, view });
   const img = SHEET_1.image(scene);
@@ -467,6 +473,7 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     clearAnim(o);
   };
   const showNational = () => {
+    focus = null;
     show(NATIONAL, { progress, view: NATIONAL });
     o.setTitle("🗺️ 旅行地图", `走过 ${progress - 1} / ${CITIES.length} 站 · 现在在 ${here.region}-${here.city}`);
     o.setLegend("provinces");
@@ -474,8 +481,9 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     back?.destroy();
     back = null;
   };
-  const showRegion = (region: string) => {
-    const v = provinceView(region);
+  /** v 不给就是刚点开（框住整个省）；拖动松手后用拖到的位置重画。 */
+  const showRegion = (region: string, v: View = provinceView(region)) => {
+    focus = region;
     show(v, { progress, view: v, focus: region });
     const cs = BY_REGION.get(region)!;
     const walked = cs.filter((c) => c.level < progress).length;
@@ -486,9 +494,10 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     if (!back) back = o.button(98, 70, "← 全国", showNational, true);
   };
 
-  // 点省份：小的先判断（北京在河北中间）；点不中任何省就找最近的城市
-  o.hit.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-    const [mx, my] = toMap(view, pointer.x, pointer.y);
+  // 点省份：小的先判断（北京在河北中间）；点不中任何省就找最近的城市。
+  // 点到正在看的这个省不动（不然拖好的位置会被重置）；点到海上回全国。
+  const tap = (sx: number, sy: number) => {
+    const [mx, my] = toMap(view, sx, sy);
     let region = HIT_ORDER.find((p) => pointIn(p, mx, my))?.name;
     if (!region) {
       let best = 36 / view.k;
@@ -500,8 +509,64 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
         }
       }
     }
-    if (region && BY_REGION.has(region)) showRegion(region);
-    else if (view !== NATIONAL) showNational();
+    if (region && BY_REGION.has(region)) {
+      if (region !== focus) showRegion(region);
+    } else if (focus) showNational();
+  };
+
+  // 点击和拖动分开：按下时只记起点；移动超过一小段就算拖动——只挪地图，松手也不算点击
+  // （选中广东、从广西那里按下去拖，从头到尾都还是广东）。没怎么动就松开才是点击。
+  // 拖的时候直接平移画好的地图（跟手），松手后按新位置重画一次补上露出来的边；
+  // 拖得很远时中途也补画一次。全国图整张都在屏幕里，不挪，但拖完一样不算点击。
+  const DRAG_START = 12;
+  let drag: { sx: number; sy: number; moved: boolean; cx: number; cy: number } | null = null;
+  let lastCommit = 0;
+  const shift = (ox: number, oy: number) => {
+    o.maps.setPosition(ox, oy);
+    o.anim.setPosition(ox, oy);
+  };
+  /** 把拖动的位移落实到镜头里：按新位置重画，地图和小旗归位。 */
+  const commit = () => {
+    if (!drag || !focus) return;
+    shift(0, 0);
+    showRegion(focus, { ...view, cx: drag.cx, cy: drag.cy });
+    lastCommit = scene.time.now;
+  };
+  o.hit.on("pointerdown", (p: Phaser.Input.Pointer) => {
+    drag = { sx: p.x, sy: p.y, moved: false, cx: view.cx, cy: view.cy };
+  });
+  const onMove = (p: Phaser.Input.Pointer) => {
+    if (!drag || !p.isDown) return;
+    const dx = p.x - drag.sx, dy = p.y - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) < DRAG_START) return;
+    drag.moved = true;
+    if (!focus) return;
+    // 最多拖到这个省的边缘到屏幕中间，不会把省拖得找不到
+    const [x0, y0, x1, y1] = provOf(focus).box;
+    drag.cx = Phaser.Math.Clamp(view.cx - dx / view.k, x0, x1);
+    drag.cy = Phaser.Math.Clamp(view.cy - dy / view.k, y0, y1);
+    const ox = (view.cx - drag.cx) * view.k, oy = (view.cy - drag.cy) * view.k;
+    shift(ox, oy);
+    if (Math.hypot(ox, oy) > 160 && scene.time.now - lastCommit > 200) {
+      commit();
+      drag.sx = p.x; // 之后的位移从这里重新算
+      drag.sy = p.y;
+    }
+  };
+  const onUp = (p: Phaser.Input.Pointer) => {
+    if (!drag) return;
+    if (drag.moved) {
+      if (focus && (drag.cx !== view.cx || drag.cy !== view.cy)) commit();
+    } else {
+      tap(p.x, p.y);
+    }
+    drag = null;
+  };
+  scene.input.on("pointermove", onMove);
+  scene.input.on("pointerup", onUp);
+  o.onClose(() => {
+    scene.input.off("pointermove", onMove);
+    scene.input.off("pointerup", onUp);
   });
 
   o.button(WIDTH - 82, 70, "关闭 ✕", () => {
