@@ -3,9 +3,11 @@
 // 只看不选关（家长的决定：点城市重玩会牵扯进度怎么存，先不做）。
 //
 // 画面：
-//   全国：按省上色（走完绿 / 正在走黄 / 没到灰），走完的省打 ✓、没到的上 🔒，
-//         只画走过的路线（省内实线、跨省虚弧线）。大陆居中放在屏幕正中，南海诸岛
-//         和九段线在下方完整画出来。
+//   全国：按省上色（走完绿 / 正在走黄 / 没到灰），走完的省打 ✓、没到的上 🔒。
+//         大陆居中放在屏幕正中，南海诸岛和九段线在下方完整画出来。
+//   不画旅行路线：按关卡顺序把城市连起来会来回折返（广西 南宁→桂林→柳州→北海→百色），
+//   再加上跨省的虚线，满图都是线，反而看不清城市在哪（2026-10 家长要求去掉）。
+//   只在过关动画里，小旗 / 飞机移动时身后画一道线，到站就淡出，地图上不留。
 //   点开一个省：放大这个省，每个城市标 ✓ / 🚩 / 🔒 和名字。
 //
 // 过关动画：
@@ -17,11 +19,11 @@
 //   任何时候点一下屏幕，直接跳到最后。
 //
 // 实现：
-//   地图本身（省份、路线、城市标记、城市名）画在自己的 2D 画布上当贴图；标题、图例、
+//   地图本身（省份、城市标记、城市名）画在自己的 2D 画布上当贴图；标题、图例、
 //   按钮、小旗、飞机、正在画的航线是 Phaser 对象——换标题不用重画地图。
 //   有两张画布，镜头推拉时两张图同时在屏幕上（一张淡出一张淡入），像真的镜头。
 //   「这个省变色」= 再叠一张「变化之后」的全国图，用这个省的轮廓当遮罩慢慢显出来，
-//   省里已经画好的路线和城市点原样保留，不用每一帧重画整张地图。
+//   省里的城市点原样保留，不用每一帧重画整张地图。
 //   画布用 willReadFrequently 放内存里（安卓切后台不丢），万一还是被清空了，
 //   收到 contextrestored 就按上次的样子重画——和 art.ts 的手画贴图一个道理。
 // ---------------------------------------------------------------------------
@@ -147,8 +149,6 @@ interface Frame {
   labelRegions?: string[];
   /** 这几关的城市标记由动画来画（小旗、刚打上的 ✓），画布上不画 */
   hide?: number[];
-  /** 通往这一关的那段路线由动画来画 */
-  skipRoute?: number;
 }
 
 /** 一张地图画布 + 它的贴图。记着自己是按哪个镜头画的，放进别的镜头时要换算。 */
@@ -232,28 +232,6 @@ function paint(g: CanvasRenderingContext2D, f: Frame): void {
   g.lineWidth = 0.8;
   g.strokeStyle = "#3d5f80";
   g.stroke();
-
-  // 走过的路线
-  for (let i = 1; i < CITIES.length; i++) {
-    const a = CITIES[i - 1], b = CITIES[i];
-    if (b.level > f.progress || b.level === f.skipRoute) continue;
-    const [x1, y1] = toScreen(v, a.x, a.y);
-    const [x2, y2] = toScreen(v, b.x, b.y);
-    g.beginPath();
-    g.moveTo(x1, y1);
-    if (a.region === b.region) {
-      g.lineTo(x2, y2);
-      g.setLineDash([]);
-    } else {
-      const [mx, my] = toScreen(v, ...arcControl(a, b));
-      g.quadraticCurveTo(mx, my, x2, y2);
-      g.setLineDash([6, 6]);
-    }
-    g.lineWidth = 3;
-    g.strokeStyle = "#e8703c";
-    g.stroke();
-  }
-  g.setLineDash([]);
 
   // 城市标记
   const labelSet = f.focus ? [f.focus] : f.labelRegions;
@@ -562,7 +540,7 @@ function goButton(o: Overlay, b: City, onGo: () => void): void {
 function sameProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
   const { scene } = o;
   const view = provinceView(a.region);
-  SHEET_1.draw(scene, { progress: b.level, view, labelRegions: [a.region], hide: [a.level, b.level], skipRoute: b.level });
+  SHEET_1.draw(scene, { progress: b.level, view, labelRegions: [a.region], hide: [a.level, b.level] });
   o.maps.add(SHEET_1.image(scene));
   o.setTitle("恭喜过关！", `下一站：${b.region}-${b.city}`);
   o.setLegend("cities");
@@ -606,6 +584,8 @@ function sameProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     flag.destroy();
     bobbingFlag(o, ...toScreen(view, b.x, b.y));
     sfx.match(2);
+    // 身后那道线到站就淡出，地图上不留路线
+    scene.tweens.add({ targets: line, alpha: 0, delay: 250, duration: 500, onComplete: () => line.destroy() });
     goButton(o, b, onGo);
   }
   // 着急的话点一下直接到
@@ -640,7 +620,7 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     }
     drawTrail();
   };
-  // 航线：沿虚线弧画到 trailT 为止（虚线和地图上画好的跨省路线一个样子）
+  // 航线：飞机身后沿虚线弧画到 trailT 为止，推近到新省时淡出，地图上不留
   const drawTrail = () => {
     trail.clear();
     if (trailT <= 0) return;
@@ -713,7 +693,10 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     for (const pts of provincePoints(name)) flash.fillPoints(pts, true);
     flash.setAlpha(0);
     o.anim.addAt(flash, 0);
-    track(scene.tweens.add({ targets: flash, alpha: { from: 0.85, to: 0 }, duration: 600, ease: "Quad.easeOut" }));
+    track(scene.tweens.add({
+      targets: flash, alpha: { from: 0.85, to: 0 }, duration: 600, ease: "Quad.easeOut",
+      onComplete: () => flash.destroy(), // 闪完就删，别留一层看不见的大图形
+    }));
     return tween({ targets: img, alpha: 1, duration: 380, ease: "Quad.easeOut" });
   };
 
@@ -842,7 +825,7 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     if (done) return;
 
     // ③ 刚走完的省「刷」地变绿
-    SHEET_1.draw(scene, { progress: b.level, view: NATIONAL, hide: [b.level], skipRoute: b.level }); // 全国（变化之后）
+    SHEET_1.draw(scene, { progress: b.level, view: NATIONAL, hide: [b.level] }); // 全国（变化之后）
     sfx.win();
     o.setTitle(`${a.region} 全部走完啦！🎉`, `走完 ${regionNo(a.region)} 个省，还有 ${total - regionNo(a.region)} 个`, true);
     await reveal(a.region);
@@ -903,6 +886,7 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     await moveCam(NATIONAL, VB, boxCenter(b.region), 700, (u) => {
       detailB.setAlpha(Math.min(1, Math.max(0, (u - 0.45) / 0.45)));
       landed.obj.setScale(ICON_SCALE_NATIONAL + (ICON_SCALE - ICON_SCALE_NATIONAL) * u);
+      trail.setAlpha(1 - u);
       if (u > 0.5 && !legendSwitched) {
         legendSwitched = true;
         o.setLegend("cities");
@@ -911,7 +895,7 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     if (done) return;
     dropSheet(nationalAfter);
     trailT = 0;
-    apply(); // 详细图里已经画着这段路线了，动画的航线收起来
+    apply(); // 航线已经淡没了，收起来
     o.setTitle(`欢迎来到${b.region}！`, `第一站：${b.city}`);
 
     // ⑦ 小旗从天上插到第一站
