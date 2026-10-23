@@ -40,6 +40,7 @@ import {
 } from "../art";
 import { sfx } from "../audio";
 import { CITY_XY, MAINLAND, NINE_DASH, PROVINCES, type MapProvince } from "./map-data";
+import { drawStamp, stampTexture } from "./stamps";
 
 const RES = 1.5; // 手机上游戏画面大约放大 1.5 倍，画布按这个分辨率画才不糊
 const DEPTH = 70;
@@ -321,7 +322,11 @@ interface Overlay {
   /** 全屏透明点击层：浏览时点省份，旅行时跳过动画 */
   hit: Phaser.GameObjects.Rectangle;
   setTitle(title: string, subtitle: string, pop?: boolean): void;
-  setLegend(kind: "provinces" | "cities"): void;
+  setLegend(kind: "provinces" | "cities" | "none"): void;
+  /** 盖住地图、但在标题和按钮下面的一层（护照页面） */
+  addPanel(obj: Phaser.GameObjects.GameObject): void;
+  /** 和标题、按钮同一层（压得住标题板的东西：盖章、小护照图标） */
+  addUI(obj: Phaser.GameObjects.GameObject): void;
   button(x: number, y: number, label: string, onClick: () => void, small?: boolean): Phaser.GameObjects.Container;
   /** 关掉浮层（停掉动画、销毁对象、清理遮罩） */
   close(): void;
@@ -385,6 +390,14 @@ function makeOverlay(scene: Phaser.Scene): Overlay {
     setLegend(kind) {
       provLegend.setVisible(kind === "provinces");
       cityLegend.setVisible(kind === "cities");
+      legendBg.setVisible(kind !== "none");
+      credit.setVisible(kind !== "none");
+    },
+    addPanel(obj) {
+      layer.addAt(obj, layer.getIndex(ui));
+    },
+    addUI(obj) {
+      ui.add(obj);
     },
     button(x, y, text, onClick, small = false) {
       const h = small ? 46 : 68;
@@ -460,7 +473,14 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
   const here = CITIES[Math.min(progress, CITIES.length) - 1];
   let view = NATIONAL;
   let focus: string | null = null; // 点开的省；null = 全国图
-  let back: Phaser.GameObjects.Container | null = null;
+  let left: Phaser.GameObjects.Container | null = null; // 标题栏左边：全国图「🛂 护照」，省级图「← 全国」
+  let leftLabel = "";
+  const setLeft = (label: string | null, fn?: () => void) => {
+    if (label === leftLabel) return;
+    left?.destroy();
+    left = label && fn ? o.button(label.length > 4 ? 104 : 98, 70, label, fn, true) : null;
+    leftLabel = label ?? "";
+  };
   SHEET_1.draw(scene, { progress, view });
   const img = SHEET_1.image(scene);
   o.maps.add(img);
@@ -478,8 +498,10 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     o.setTitle("🗺️ 旅行地图", `走过 ${progress - 1} / ${CITIES.length} 站 · 现在在 ${here.region}-${here.city}`);
     o.setLegend("provinces");
     bobbingFlag(o, ...toScreen(NATIONAL, here.x, here.y), ICON_SCALE_NATIONAL);
-    back?.destroy();
-    back = null;
+    setLeft("🛂 护照", () => {
+      setLeft(null);
+      openPassport(o, progress, showNational);
+    });
   };
   /** v 不给就是刚点开（框住整个省）；拖动松手后用拖到的位置重画。 */
   const showRegion = (region: string, v: View = provinceView(region)) => {
@@ -491,7 +513,7 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     o.setTitle(region, st === "done" ? `全部走完啦 · ${cs.length} 站` : st === "locked" ? `还没到 · 一共 ${cs.length} 站` : `走过 ${walked} / ${cs.length} 站`);
     o.setLegend("cities");
     if (here.region === region) bobbingFlag(o, ...toScreen(v, here.x, here.y));
-    if (!back) back = o.button(98, 70, "← 全国", showNational, true);
+    setLeft("← 全国", showNational);
   };
 
   // 点省份：小的先判断（北京在河北中间）；点不中任何省就找最近的城市。
@@ -574,6 +596,101 @@ function browse(o: Overlay, opts: { level: number; onClose: () => void }): void 
     opts.onClose();
   }, true);
   showNational();
+}
+
+// --- 旅行护照：34 个省的章，一页 3 × 4，左右滑或点按钮翻页 ----------------------------
+const PASSPORT_TOP = 168;
+const PASSPORT_H = 940;
+const PER_PAGE = 12;
+const PASSPORT_KEY = "passport-page";
+let passportCanvas: HTMLCanvasElement | null = null;
+let passportCtx: CanvasRenderingContext2D | null = null;
+let passportLast: { page: number; progress: number } | null = null;
+
+function paintPassport(g: CanvasRenderingContext2D, page: number, progress: number): void {
+  g.setTransform(RES, 0, 0, RES, 0, 0);
+  g.clearRect(0, 0, WIDTH, PASSPORT_H); // 背景透明：章的墨迹斑驳是擦出来的洞，纸色由底下的方块给
+  REGIONS.slice(page * PER_PAGE, (page + 1) * PER_PAGE).forEach((r, i) => {
+    const x = (WIDTH / 3) * ((i % 3) + 0.5);
+    const y = (PASSPORT_H / 4) * (Math.floor(i / 3) + 0.5);
+    drawStamp(g, x, y, 86, r.name, regionStatus(r.name, progress) === "done");
+  });
+}
+
+function drawPassport(scene: Phaser.Scene, page: number, progress: number): void {
+  const textures = scene.textures;
+  if (!passportCanvas) {
+    const c = document.createElement("canvas");
+    c.width = WIDTH * RES;
+    c.height = PASSPORT_H * RES;
+    passportCanvas = c;
+    passportCtx = c.getContext("2d", { willReadFrequently: true });
+    c.addEventListener("contextrestored", () => {
+      if (passportLast && passportCtx) paintPassport(passportCtx, passportLast.page, passportLast.progress);
+      if (textures.exists(PASSPORT_KEY)) (textures.get(PASSPORT_KEY) as Phaser.Textures.CanvasTexture).refresh();
+    });
+  }
+  if (!textures.exists(PASSPORT_KEY)) textures.addCanvas(PASSPORT_KEY, passportCanvas);
+  if (!passportCtx) return;
+  passportLast = { page, progress };
+  paintPassport(passportCtx, page, progress);
+  (textures.get(PASSPORT_KEY) as Phaser.Textures.CanvasTexture).refresh();
+}
+
+/** 在地图浮层里翻开护照；onBack 回到全国图。默认翻到现在所在的省那一页。 */
+function openPassport(o: Overlay, progress: number, onBack: () => void): void {
+  const { scene } = o;
+  const pages = Math.ceil(REGIONS.length / PER_PAGE);
+  const here = CITIES[Math.min(progress, CITIES.length) - 1];
+  let page = Math.floor(Math.max(0, REGIONS.findIndex((r) => r.name === here.region)) / PER_PAGE);
+  const stamped = REGIONS.filter((r) => regionStatus(r.name, progress) === "done").length;
+  drawPassport(scene, page, progress);
+
+  const panel = scene.add.container(0, 0);
+  // 纸：吃掉点击（别点穿到地图），也用来左右滑翻页
+  const paper = scene.add.rectangle(0, 0, WIDTH, HEIGHT, 0xfffaf0).setOrigin(0).setInteractive();
+  const frame = scene.add.graphics();
+  frame.lineStyle(4, 0xe6d5b0, 1).strokeRoundedRect(16, PASSPORT_TOP - 6, WIDTH - 32, PASSPORT_H + 12, 24);
+  const sheet = scene.add.image(0, PASSPORT_TOP, PASSPORT_KEY).setOrigin(0).setScale(1 / RES);
+  const pageNo = scene.add
+    .text(WIDTH / 2, HEIGHT - 132, "", { fontFamily: FONT, fontSize: "24px", color: "#a8823f", padding: { top: 4, bottom: 4 } })
+    .setOrigin(0.5);
+  panel.add([paper, frame, sheet, pageNo]);
+  o.addPanel(panel);
+  o.setTitle("🛂 旅行护照", `盖了 ${stamped} 个章 · 一共 ${REGIONS.length} 个`);
+  o.setLegend("none");
+
+  const prev = o.button(140, HEIGHT - 132, "‹ 上一页", () => go(page - 1), true);
+  const next = o.button(WIDTH - 140, HEIGHT - 132, "下一页 ›", () => go(page + 1), true);
+  const go = (p: number) => {
+    page = Phaser.Math.Clamp(p, 0, pages - 1);
+    drawPassport(scene, page, progress);
+    pageNo.setText(`第 ${page + 1} / ${pages} 页`);
+    prev.setAlpha(page > 0 ? 1 : 0.35);
+    next.setAlpha(page < pages - 1 ? 1 : 0.35);
+  };
+
+  let sx: number | null = null;
+  paper.on("pointerdown", (p: Phaser.Input.Pointer) => {
+    sx = p.x;
+  });
+  const onUp = (p: Phaser.Input.Pointer) => {
+    if (sx === null) return;
+    const dx = p.x - sx;
+    sx = null;
+    if (dx < -60) go(page + 1);
+    else if (dx > 60) go(page - 1);
+  };
+  scene.input.on("pointerup", onUp);
+  o.onClose(() => scene.input.off("pointerup", onUp));
+
+  const back = o.button(104, 70, "← 地图", () => {
+    scene.input.off("pointerup", onUp);
+    [prev, next, back].forEach((b) => b.destroy());
+    panel.destroy(true);
+    onBack();
+  }, true);
+  go(page);
 }
 
 function pointIn(p: Prov, x: number, y: number): boolean {
@@ -833,10 +950,50 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     }
   };
 
+  // 盖章：这个省的章从屏幕外「啪」地盖到中间（咚一声、画面一震），停一下，
+  // 再缩小飞进左上角冒出来的小护照
+  const extras: Phaser.GameObjects.GameObject[] = []; // 放在标题那一层的临时东西，跳过时一起删
+  const stampMoment = async (region: string) => {
+    const pBg = scene.add.graphics();
+    pBg.fillStyle(0xfdf6e3, 1).fillCircle(0, 0, 30);
+    pBg.lineStyle(4, 0xc98f4a, 1).strokeCircle(0, 0, 30);
+    const pIcon = scene.add.text(0, 2, "🛂", { fontSize: "32px", padding: { top: 6, bottom: 6 } }).setOrigin(0.5);
+    const passport = scene.add.container(70, 88, [pBg, pIcon]).setAlpha(0);
+    o.addUI(passport);
+    extras.push(passport);
+    track(scene.tweens.add({ targets: passport, alpha: 1, duration: 200 }));
+    // 章底下垫一张米色圆纸片：章是透明底，直接盖在地图上省界和城市点会透出来，字不醒目
+    const card = scene.add.graphics();
+    card.fillStyle(0x000000, 0.18).fillCircle(0, 6, 118);
+    card.fillStyle(0xfffaf0, 0.95).fillCircle(0, 0, 118);
+    const st = scene.add
+      .container(WIDTH / 2, HEIGHT / 2 - 40, [card, scene.add.image(0, 0, stampTexture(scene, region))])
+      .setScale(2.4)
+      .setAlpha(0);
+    o.addUI(st);
+    extras.push(st);
+    await tween({ targets: st, scale: 1.1, alpha: 1, duration: 230, ease: "Quad.easeIn" });
+    if (done) return;
+    sfx.stamp();
+    scene.cameras.main.shake(140, 0.006);
+    await tween({ targets: st, scale: 1, duration: 90, ease: "Quad.easeOut" });
+    if (done) return;
+    await wait(450);
+    if (done) return;
+    await tween({ targets: st, x: 70, y: 88, scale: 0.12, duration: 380, ease: "Cubic.easeIn" });
+    if (done) return;
+    st.destroy();
+    sfx.match(4);
+    // 小护照弹一下再淡掉——不用等它，飞机这就起飞
+    track(scene.tweens.add({ targets: passport, scale: 1.3, duration: 110, yoyo: true }));
+    track(scene.tweens.add({ targets: passport, alpha: 0, delay: 380, duration: 250, onComplete: () => passport.destroy() }));
+  };
+
   const skip = () => {
     if (done) return;
     done = true;
     running.forEach((t) => t.stop());
+    extras.splice(0).forEach((x) => x.destroy());
     clearAnim(o);
     sheets.splice(0).forEach((img) => img.destroy());
     trailT = 0;
@@ -895,7 +1052,7 @@ function crossProvince(o: Overlay, a: City, b: City, onGo: () => void): void {
     o.setTitle(`${a.region} 全部走完啦！🎉`, `走完 ${regionNo(a.region)} 个省，还有 ${total - regionNo(a.region)} 个`, true);
     await reveal(a.region);
     if (done) return;
-    await wait(450);
+    await stampMoment(a.region);
     if (done) return;
 
     // ④ 小旗变飞机，沿虚线弧飞过去

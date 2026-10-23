@@ -89,6 +89,12 @@ export const sfx = {
     );
   },
 
+  /** 旅行护照盖章：低沉的「咚」，带一点纸的脆响。 */
+  stamp(): void {
+    play({ freq: 170, to: 60, dur: 0.18, type: "sine", gain: 0.24 });
+    play({ freq: 1100, to: 500, dur: 0.05, type: "triangle", gain: 0.05 });
+  },
+
   shuffle(): void {
     play({ freq: 300, to: 720, dur: 0.22, type: "triangle", gain: 0.1 });
   },
