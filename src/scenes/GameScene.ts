@@ -24,6 +24,7 @@ import {
   WELL_COUNT_X_MAX,
   OVERFLOW_HOLD_MS,
   CONTACT_EPS,
+  COMBO_WINDOW_MS,
   SETTLED_SPEED,
   MAX_FALL_SPEED,
   PHYSICS_SPEEDUP,
@@ -81,6 +82,10 @@ export class GameScene extends Phaser.Scene {
   private remaining = 0;
   private gameOver = false;
   private overflowMs = 0;
+  private playMs = 0; // 这一关真正在玩的时间（答题、看地图时不走）
+  private combo = 0; // 现在连到第几对
+  private lastPairMs = -Infinity; // 上一对是什么时候消的（playMs）
+  private comboText?: Phaser.GameObjects.Container;
   private physicsMs = 0; // 还没模拟掉的物理时间，见 stepPhysics
   private level = 1;
   private unlocks = 0; // reserve slots opened this level
@@ -184,6 +189,10 @@ export class GameScene extends Phaser.Scene {
     this.quizOpen = false;
     this.mapOpen = false;
     this.overflowMs = 0;
+    this.playMs = 0;
+    this.combo = 0;
+    this.lastPairMs = -Infinity;
+    this.comboText = undefined;
     this.physicsMs = 0;
     this.unlocks = 0; // locks reset every level, like the original
 
@@ -740,6 +749,7 @@ export class GameScene extends Phaser.Scene {
     // 判断前面：结束画面底下水果照样落稳，和以前一样。
     this.stepPhysics(delta);
     if (this.gameOver || this.quizOpen || this.mapOpen) return;
+    this.playMs += delta;
 
     this.updateConveyor(delta);
 
@@ -781,7 +791,6 @@ export class GameScene extends Phaser.Scene {
     // landing a match ON TOP (or using 消除 to pop the top one).
     const contactDist = FRUIT_RADIUS * 2 + CONTACT_EPS;
     const used = new Set<Fruit>();
-    let combo = 0;
     for (let i = 0; i < inZone.length; i++) {
       const a = inZone[i];
       if (used.has(a)) continue;
@@ -805,7 +814,7 @@ export class GameScene extends Phaser.Scene {
         }
         this.eliminate(a);
         this.eliminate(b);
-        sfx.match(combo++);
+        this.pairCleared();
         break;
       }
     }
@@ -829,6 +838,67 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.overflowMs = 0;
     }
+  }
+
+  /** 消掉一对（普通配对、彩虹果都算；「消除」道具不算）。3 秒内接着消就是连击。 */
+  private pairCleared(): void {
+    this.combo = this.playMs - this.lastPairMs <= COMBO_WINDOW_MS ? this.combo + 1 : 1;
+    this.lastPairMs = this.playMs;
+    sfx.match(this.combo - 1); // 叮声随连击升调（音效里最多升 6 级）
+    if (this.combo >= 2) this.showCombo(this.combo);
+  }
+
+  /** 井口上方弹出「连击 ×N」，连得越多字越大、星星越多，3 / 5 / 8 连再夸一句。 */
+  private showCombo(n: number): void {
+    if (this.comboText) {
+      this.tweens.killTweensOf(this.comboText);
+      this.comboText.destroy();
+    }
+    const x = WIDTH / 2;
+    const y = this.basketMinY() - 70;
+    const size = Math.min(44 + (n - 2) * 4, 68);
+    const font = '-apple-system, "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif';
+    const parts: Phaser.GameObjects.Text[] = [
+      this.add
+        .text(0, 0, `连击 ×${n}`, {
+          fontFamily: font,
+          fontSize: `${size}px`,
+          fontStyle: "bold",
+          color: "#ffd84a",
+          stroke: "#8a4b00",
+          strokeThickness: 8,
+          shadow: { offsetX: 0, offsetY: 4, color: "#5a3000", blur: 0, fill: true },
+          padding: { top: 8, bottom: 8 },
+        })
+        .setOrigin(0.5),
+    ];
+    const praise = n >= 8 ? "停不下来！" : n >= 5 ? "太厉害了！" : n >= 3 ? "好快！" : "";
+    if (praise) {
+      parts.push(
+        this.add
+          .text(0, size * 0.95, praise, {
+            fontFamily: font,
+            fontSize: "30px",
+            fontStyle: "bold",
+            color: "#ffffff",
+            stroke: "#c0392b",
+            strokeThickness: 7,
+            padding: { top: 6, bottom: 6 },
+          })
+          .setOrigin(0.5),
+      );
+    }
+    const c = this.add.container(x, y, parts).setDepth(26).setScale(0.4);
+    this.comboText = c;
+    this.tweens.add({ targets: c, scale: 1, duration: 220, ease: "Back.easeOut" });
+    this.tweens.add({
+      targets: c, y: y - 50, alpha: 0, delay: 650, duration: 450, ease: "Quad.easeIn",
+      onComplete: () => {
+        c.destroy();
+        if (this.comboText === c) this.comboText = undefined;
+      },
+    });
+    this.sparkEmitter.explode(Math.min(6 + n * 2, 24), x, y);
   }
 
   // ---------------------------------------------------------------------------

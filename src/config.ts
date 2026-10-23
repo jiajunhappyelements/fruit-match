@@ -205,6 +205,10 @@ export function stumpsForLevel(level: number): number {
 // clear — that serial blocking is the core difficulty of the well.
 export const CONTACT_EPS = 8;
 
+// 连击：消掉一对之后这么久之内又消掉一对，就算连上了（只算玩的时间，答题、
+// 看地图时游戏暂停，不会把连击断掉）。从第 2 对起弹「连击 ×N」，叮声一路升调。
+export const COMBO_WINDOW_MS = 3000;
+
 // A released fruit counts as "settled" (for overflow checks) below this speed.
 export const SETTLED_SPEED = 0.6;
 
